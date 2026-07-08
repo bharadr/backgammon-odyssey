@@ -1,5 +1,5 @@
 # tests/test_board.py
-from engine.board import Board, starting_board, flip, pip_count, is_valid
+from engine.board import Board, starting_board, flip, pip_count, is_valid, render
 
 
 # --- Fixtures: boards to test against ---------------------------------
@@ -23,7 +23,7 @@ def midgame_boards() -> list[Board]:
         points=(
             0,  0,  2,  0,  4,  3,    # me: 2+4+3 = 9 in my home region
             0,  3,  0,  0,  0,  0,    # me: +3 → my total 12 ✓
-            -2,  0, -3,  0,  0, -4,    # opp: -9
+            -2,  0, -1,  0,  0, -6,    # opp: -9
             0, -2,  0, -2,  0,  0,    # opp: -4 → opp total -13 ✓
         ),
         bar_count=0, opp_bar_count=0,
@@ -31,7 +31,7 @@ def midgame_boards() -> list[Board]:
     )
     b3 = Board(
         points=(
-            0,  0,  2,  0,  4,  3,    # me: 2+4+3 = 9 in my home region
+            0,  0,  1,  0,  7,  1,    # me: 1+7+1 = 9 in my home region
             0,  0,  0,  0,  0,  0,    
             0,  0, 0,  0,  0, 0,    
             0, -2,  0, -3,  0,  0,    
@@ -77,4 +77,5 @@ def test_flip_conserves_checker_totals():
 def test_midgame_boards_are_valid():
     # guards against bugs in the test fixtures themselves
     for b in midgame_boards():
+        print(render(b))
         assert is_valid(b)
