@@ -4,12 +4,16 @@ from .board import Board
 BAR_IDX = 24
 
 def generate_moves(board: Board, dice: tuple[int, int]) -> set[Board]:
-    """All legal afterstates for `board` given `dice` that differ from
-    the original board.
+    """The set of legal afterstates: every distinct position reachable
+    by playing `dice` from `board`.
 
-    Returns {} when no legal move exists (the "dance") — the caller must
-    treat an empty set as a forfeited turn. Every returned board therefore
-    differs from `board`: this function returns *moves*, not afterstates.
+    Each element is a resulting `Board`, not a move description. The set
+    excludes the unchanged input — a returned board always differs from
+    `board` — and reflects the max-play rule, so every element uses as
+    many dice as the rules allow.
+
+    Returns {} when no legal play exists (the "dance"); the caller must
+    treat the empty set as a forfeited turn.
     """
     if dice[0] == dice[1]:
         # Doubles: four identical dice, so ordering is meaningless —
@@ -107,44 +111,38 @@ def move_one(board: Board, src: int, die: int) -> Board | None:
         new_bar_count = board.bar_count
         new_points[src] -= 1  # source decrement, done once for all cases
 
-    if dst >= 0 and dst < 24:
+    if 0 <= dst < 24:
         # --- Normal hop: destination is on the board -------------------
+        dest = board.points[dst]
+        if dest < -1:                   # two or more opponents: blocked
+            return None
         opp_bar_count_change = 0
-        if board.points[dst] >= 0:      # open point or my own stack
-            new_points[dst] += 1
-        elif board.points[dst] == -1:   # lone opponent checker: a blot
+        if dest == -1:                  # lone opponent checker: a blot
             # The hit: their checker leaves the board for THEIR bar.
             new_points[dst] = 1
             opp_bar_count_change = 1
-        else:                           # two or more opponents: blocked
-            return None
+        else:                           # open point or my own stack
+            new_points[dst] += 1
         return Board(points=tuple(new_points),
                     bar_count=new_bar_count,
                     opp_bar_count=board.opp_bar_count + opp_bar_count_change,
                     off_count=board.off_count,
                     opp_off_count=board.opp_off_count)
-    else:
-        # --- Bear-off: destination is past the edge --------------------
-        off_count_change = 0
-        # Gate: legal only when all 15 of my checkers are home or off.
-        # Judged on board.points (the position BEFORE this move), with the
-        # p > 0 filter — opponent checkers squatting in my home don't count.
-        # A bar checker fails this sum automatically, so no separate check.
-        bearing_off_valid = sum(val for val in board.points[:6] if val > 0) + board.off_count == 15
-        if not bearing_off_valid:
-            return None
-        else:
-            if dst == -1:
-                # Exact roll: die == src + 1 pips. Always legal once home.
-                off_count_change = 1
-            elif dst < -1:
-                # Overshoot: Legal only for the rearmost checker
-                if any(board.points[i] > 0 for i in range(src + 1, 6)):
-                    return None
-                else:
-                    off_count_change = 1
-        return Board(points=tuple(new_points),
-                    bar_count=new_bar_count,
-                    opp_bar_count=board.opp_bar_count,
-                    off_count=board.off_count + off_count_change,
-                    opp_off_count=board.opp_off_count)
+
+    # --- Bear-off: destination is past the edge (dst < 0) --------------
+    # Gate: legal only when all 15 of my checkers are home or off.
+    # Judged on board.points (the position BEFORE this move), with the
+    # p > 0 filter — opponent checkers squatting in my home don't count.
+    bearing_off_valid = board.bar_count == 0 and \
+        sum(val for val in board.points[:6] if val > 0) + board.off_count == 15
+    if not bearing_off_valid:
+        return None
+    # Overshoot (dst < -1) is legal only for the rearmost checker; an exact
+    # roll (dst == -1) is always fine once home.
+    if dst < -1 and any(board.points[i] > 0 for i in range(src + 1, 6)):
+        return None
+    return Board(points=tuple(new_points),
+                bar_count=new_bar_count,
+                opp_bar_count=board.opp_bar_count,
+                off_count=board.off_count + 1,
+                opp_off_count=board.opp_off_count)
