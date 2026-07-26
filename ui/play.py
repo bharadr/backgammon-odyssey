@@ -12,7 +12,8 @@ from engine.game import (
 )
 from engine.notation import describe_move
 from agent.human_agent import HumanAgent
-from agent.random_agent import random_agent
+from agent.skill_agent import SkillAgent
+from coach.gnubg_provider import GnubgProvider
 
 
 def play_interactive(human: Agent, opponent: Agent, rng: random.Random,
@@ -58,10 +59,16 @@ def play_interactive(human: Agent, opponent: Agent, rng: random.Random,
     raise RuntimeError("game exceeded max_turns without terminating")
 
 
+# Uncalibrated starting strength; tune toward a target equity-loss/move later.
+OPPONENT_TEMPERATURE = 0.1
+
+
 def main() -> None:
     rng = random.Random()
-    print("Backgammon -- you are X (moving 23 -> off), opponent is O. Good luck!\n")
-    play_interactive(HumanAgent(), random_agent(rng), rng)
+    opponent = SkillAgent(GnubgProvider(), OPPONENT_TEMPERATURE, rng)
+    print("Backgammon -- you are X (moving toward off), opponent is O "
+          "(gnubg-backed). Good luck!\n")
+    play_interactive(HumanAgent(), opponent, rng)
 
 
 if __name__ == "__main__":

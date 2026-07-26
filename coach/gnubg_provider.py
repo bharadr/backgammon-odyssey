@@ -1,7 +1,7 @@
 import gnubg_nn
 
 from engine.board import Board
-from coach.analysis import Analysis, MoveAnalysis, OutcomeDist
+from coach.analysis import OutcomeDist
 
 
 # --- Board <-> gnubg's [2][25] representation -------------------------------
@@ -62,41 +62,19 @@ def _to_mover_perspective(opp_probs) -> OutcomeDist:
     )
 
 
-def _render(move_tuple) -> str:
-    # gnubg gives a flat sequence of (from, to) point pairs, e.g. (8, 5, 6, 5).
-    # 25 = the bar, 0 = borne off. Translate every point, then group the flat
-    # list into "from/to" moves separated by spaces.
-    def pt(p: int) -> str:
-        return {25: "bar", 0: "off"}.get(p, str(p))
-    labels = [pt(p) for p in move_tuple]
-    return " ".join(f"{labels[i]}/{labels[i + 1]}"
-                    for i in range(0, len(labels), 2))
-
-
 class GnubgProvider:
-    """AnalysisProvider backed by the gnubg-nn neural net."""
+    """AfterstateEvaluator backed by the gnubg-nn neural net -- evaluation
+    only. Move generation is the caller's job (our engine's generate_moves);
+    gnubg's own move generation (best_move) is deliberately not used, because
+    on asymmetric positions it analyses the wrong player."""
 
     def __init__(self, plies: int = 0):
         self.plies = plies
 
-    def analyze(self, position: Board, dice: tuple[int, int]) -> Analysis:
-        g_board = board_to_gnubg(position)
-        _best, entries = gnubg_nn.best_move(g_board, dice[0], dice[1],
-                                            n=self.plies, list=1)
-        moves = []
-        for key, move_tuple, probs, equity in entries:
-            # gnubg stores the afterstate board in the mover's perspective
-            # (so no flip here), but evaluates it with the opponent on roll --
-            # which is why `probs` below is opponent-perspective and DOES get
-            # flipped by _to_mover_perspective. `equity` is gnubg's own
-            # (already mover-perspective), so we use it directly rather than
-            # re-derive a formula at the analysis layer.
-            after_state = board_from_gnubg(gnubg_nn.board_from_position_key(key))
-            moves.append(MoveAnalysis(
-                after_state=after_state,
-                outcome=_to_mover_perspective(probs),
-                equity=equity,
-                notation=_render(move_tuple),
-            ))
-        moves.sort(key=lambda m: m.equity, reverse=True)  # best-first (defensive)
-        return Analysis(position=position, dice=dice, moves=tuple(moves))
+    def evaluate_afterstate(self, board: Board) -> OutcomeDist:
+        """Mover-perspective outcome for an afterstate (opponent on roll next).
+        gnubg's `probabilities` returns the opponent's cumulative 5-tuple, so
+        we flip it to the mover with `_to_mover_perspective` (no board flip;
+        verified against the known 8/5 6/5 equity)."""
+        probs = gnubg_nn.probabilities(board_to_gnubg(board), self.plies)
+        return _to_mover_perspective(probs)

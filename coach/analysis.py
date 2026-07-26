@@ -56,3 +56,13 @@ class AnalysisProvider(Protocol):
     never on a specific backend (gnubg-nn, a trained net, ...)."""
 
     def analyze(self, position: Board, dice: tuple[int, int]) -> Analysis: ...
+
+
+class AfterstateEvaluator(Protocol):
+    """Scores a single afterstate -- the position after the mover played, so
+    the opponent is on roll -- from the *mover's* perspective.
+
+    Separate from AnalysisProvider so an agent can score a position's *own*
+    legal afterstates directly, without the backend re-generating moves."""
+
+    def evaluate_afterstate(self, board: Board) -> OutcomeDist: ...
