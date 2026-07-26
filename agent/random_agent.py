@@ -16,6 +16,6 @@ def random_agent(rng: random.Random) -> Agent:
     plugs into the same `Agent` seam by scoring the afterstates instead of
     choosing blindly.
     """
-    def choose(board: Board, afterstates: set[Board]) -> Board:
-        return rng.choice(sorted(afterstates))
+    def choose(board: Board, dice: tuple[int, int], afterstates: set[Board]) -> Board:
+        return rng.choice(sorted(afterstates))  # ignores dice; afterstates suffice
     return choose

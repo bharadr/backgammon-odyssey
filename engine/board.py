@@ -64,8 +64,10 @@ def _cell(count: int, row: int) -> str:
 def render(board: Board) -> str:
     """ASCII board, always from the current player's perspective.
 
-    Top row: indices 12..23 (left to right). Bottom row: 11..0.
-    I am X, moving 23 -> 0 and bearing off past 0.
+    Point labels are standard 1-24 (index + 1); the arrays stay 0-23
+    internally. Top row: points 13..24 (indices 12..23). Bottom row: points
+    12..1 (indices 11..0). I am X, moving toward my 1-point and bearing off
+    past it.
     """
     W = 4  # column width
 
@@ -75,7 +77,7 @@ def render(board: Board) -> str:
     top_idx = list(range(12, 24))
     bot_idx = list(range(11, -1, -1))
 
-    lines = [fmt([str(i) for i in top_idx])]
+    lines = [fmt([str(i + 1) for i in top_idx])]
     lines.append(fmt(["---"] * 12))
     for row in range(ROWS):  # top stacks grow downward
         lines.append(fmt([_cell(board.points[i], row) for i in top_idx]))
@@ -83,7 +85,7 @@ def render(board: Board) -> str:
     for row in range(ROWS - 1, -1, -1):  # bottom stacks grow upward
         lines.append(fmt([_cell(board.points[i], row) for i in bot_idx]))
     lines.append(fmt(["---"] * 12))
-    lines.append(fmt([str(i) for i in bot_idx]))
+    lines.append(fmt([str(i + 1) for i in bot_idx]))
     lines.append("")
     lines.append(
         f"Bar: me {board.bar_count}, opp {board.opp_bar_count}   "

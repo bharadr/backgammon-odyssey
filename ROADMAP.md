@@ -1,138 +1,113 @@
 # Roadmap
 
-Build order for the rest of the project, following the same bottom-up,
-test-as-you-go discipline used for the engine. Each layer depends on the
-one before it.
+The project has split into **two tracks** that share the engine:
 
-## Status
+- **Track 1 — the Coach (the product/goal).** A personal backgammon coach:
+  analyze a position, rank the plays, and explain *why* one beats another.
+  Its equity oracle is **gnubg-nn** (a pip-installable, superhuman, tested
+  neural net), not a from-scratch net — trustworthy numbers now, and a
+  mediocre homegrown net would make the coach confidently explain wrong
+  moves. Runs on hand-fed positions / positions from playing in-app.
+- **Track 2 — the RL benchmark (learning / portfolio).** Backgammon as a
+  clean testbed to build and compare RL methods (TD(λ) → policy gradient →
+  mini-AlphaZero), benchmarked against gnubg-nn as a superhuman reference.
+  No product deadline; this is the "RL chops" track.
+- **Track 3 — synthesis.** Point the coach's explainability layer at *your
+  trained agents* to explain what they learned / where they diverge from
+  gnubg. The novel payoff that justifies the split. Last.
+
+Environment + oracle details live in the `analysis-oracle-and-env` memory
+(native arm64 Python 3.12 via uv; `gnubg-nn` API + cumulative equity).
+
+## Status (done)
 
 - [x] `engine/board.py` — state, flip, pip count, invariants. Tested.
-- [x] `engine/moves.py` — `move_one` / `extend` / `generate_moves`. Tested
-      bottom-up (movement law → tree shape → rule selection).
+- [x] `engine/moves.py` — `move_one` / `extend` / `generate_moves`. Tested.
 - [x] `engine/game.py` — turn loop, dice, dance/forfeit, win + single/gammon/
-      backgammon classification, agent seam. Tested.
-- [x] `agent/random_agent.py` — uniform pick behind the Agent seam,
-      injected rng. Tested (legal pick + seed-reproducible).
-- [ ] `agent/value_net.py`
-- [ ] `agent/td_agent.py`
-- [ ] `training/self_play.py`
-- [ ] `training/train.py`
+      backgammon classification. `Agent` seam carries `(board, dice,
+      afterstates)`. Tested.
+- [x] `engine/notation.py` — `describe_move` (targeted DFS via `move_one`,
+      hit-aware, 1-24 notation). Tested.
+- [x] `agent/random_agent.py` — uniform pick behind the seam. Tested.
+- [x] `agent/human_agent.py` — menu + injected-I/O choice, auto-plays forced
+      moves. Tested.
+- [x] `coach/analysis.py` — `OutcomeDist` / `MoveAnalysis` / `Analysis` +
+      `AnalysisProvider` protocol (equity is provider-supplied, not baked in).
+- [x] `coach/scoring.py` — `cubeless_equity` (opt-in scoring policy).
+- [x] `coach/gnubg_provider.py` — `Board <-> gnubg` converter, `GnubgProvider`.
+      Tested (converter anchored, provider validated on the opening).
+- [x] `ui/play.py` — interactive game vs the random agent (`python -m
+      ui.play`). **Playable (P1 done).**
 
-## `engine/game.py` (next)
+## Track 1 — the Coach
 
-Turn loop, dice rolling, player alternation, terminal detection, and
-treating an empty `generate_moves` result as a forfeited turn (the dance).
+### P2 — `SkillAgent` (a tunable, beatable opponent)
+Wrap `GnubgProvider`: score the legal afterstates and **softmax-sample by
+temperature** instead of always taking the best. τ→0 = superhuman; higher τ =
+weaker. Optionally cap to moves within ε of best (no catastrophic blunders).
+Calibrate τ by measuring equity-loss-per-move vs gnubg-best (intermediate ≈
+0.02-0.03/move). Drops into `play_interactive` in place of `random_agent`.
+- Note: doesn't need the dice — it scores the afterstates the loop hands it.
 
-**Interface decision:** keep move selection behind an agent interface so
-agents are swappable. `game.py` rolls the dice and calls the agent with the
-board + legal afterstates; the agent returns its chosen afterstate. Since
-`generate_moves` already returns afterstates, this is the clean seam.
+### P3 — the explainability layer (the MVP feature)
+Turn an `Analysis` into natural language: *why* the best play beats the
+alternatives, grounded in the `OutcomeDist` deltas + equity-loss.
+- **Prompt an existing LLM (few-shot), do NOT fine-tune** — the analysis is
+  done by the engine; the LLM narrates grounded evidence. Fine-tuning's cost
+  is a dataset we don't have; prompt + good grounding is enough.
+- Guard against the rationalization failure: feed decomposed evidence
+  (outcome-distribution deltas, position features like shots/blots/pips), and
+  constrain the model to explain only from the numbers, never invent reasons.
+- Consider active-recall UX: predict-then-reveal (you guess, then it explains
+  the gap) — stickier for building intuition than passive reading.
+- Cube coaching slots in here once the cube module (deferred) exists.
 
-**Terminal detection must classify the outcome, not just the winner** —
-this is what the value net's outputs (below) will be trained against:
-- single: loser has borne off >= 1 checker
-- gammon: loser has borne off 0
-- backgammon: loser has borne off 0 AND still has a checker in the
-  winner's home board or on the bar
+## Track 2 — the RL benchmark
 
-Decide this before writing win detection so it matches the net's head.
+Build and compare RL methods on backgammon, each benchmarked against
+gnubg-nn. Same bottom-up, test-as-you-go discipline. (Install numpy/torch
+into the venv when starting — `uv pip install -r requirements.txt`.)
 
-## 1. `agent/random_agent.py` — do first
+### `agent/value_net.py` — value function
+Board → feature vector (classic TD-Gammon encoding ~198 units) → small net.
+**Multi-outcome head, not a single win prob:** predict the cumulative
+distribution (win, win_gammon, win_backgammon, lose_gammon, lose_backgammon),
+matching gnubg's convention and `OutcomeDist`. Cubeless equity uses
+`coach/scoring.py:cubeless_equity`.
+- Requires `game.py`'s gammon/backgammon terminal detection (done) as the TD
+  target.
+- Tests: outputs form a valid distribution; `flip` symmetry
+  (`equity(b) ≈ -equity(flip(b))`) — catches encoding bugs early.
 
-Pick uniformly from `generate_moves`. Trivial, but strategically first: it's
-the baseline opponent and the integration-test harness.
+### `agent/td_agent.py` — greedy play over the net
+Score each afterstate with `value_net`, pick the max. Test with a mock net.
 
-Unlocks:
-- End-to-end games, which flush out `game.py` bugs unit tests miss
-  (turn alternation, win detection, the dance forfeiting a turn).
-- A reference win-rate (a trained agent must beat ~50% vs random).
-- First real integration test: N random-vs-random games all terminate and
-  produce a legal winner.
+### `training/self_play.py` — generate games
+Agent plays itself, recording per-game position trajectories. Test: a game
+yields a well-formed trajectory (legal states, terminal end).
 
-## 2. `agent/value_net.py` — value function
+### `training/train.py` — TD(λ) learning loop
+TD updates over trajectories (see Tesauro's paper + Sutton & Barto's
+TD-Gammon case study — read when starting this). Behavioral checks: win-rate
+vs random climbs; a few gradient steps reduce TD error on a fixed batch.
 
-Board → feature vector (classic TD-Gammon encoding is ~198 units) → small
-net.
+### Later method comparisons
+Policy-gradient / actor-critic agent; a mini-AlphaZero (self-play + MCTS +
+value/policy net). Benchmark all against gnubg-nn: convergence speed, params,
+compute, final strength.
 
-**Output a multi-outcome head, not a single win probability.** Predict the
-full outcome distribution (5-6 outputs), the way modern bots do:
+## Track 3 — synthesis
+Feed *your* trained agents' analyses into the P3 explainability layer:
+explain what the agent learned, or narrate where it disagrees with gnubg and
+why. Interpretability of a learned RL policy — the strongest frontier signal.
 
-    P(win single), P(win gammon), P(win backgammon),
-    P(lose single), P(lose gammon), P(lose backgammon)
+## Deferred: cube module
+Everything is cubeless. Double/take/drop is a layer on the same outputs (no
+retraining): Janowski's cubeful model + cube ownership for money, or a
+match-equity table (gnubg-nn ships `equities.value`) + score for match play.
 
-From that, cubeless equity is:
-
-    equity = 1*P(Ws) + 2*P(Wg) + 3*P(Wbg)
-           - 1*P(Ls) - 2*P(Lg) - 3*P(Lbg)
-
-Why bake this in now even though cube logic is deferred:
-- A single win-prob only yields a race-only proxy equity (`2P-1`) that is
-  wrong wherever gammons matter.
-- The gammon/backgammon splits are the *required input* to cube decisions
-  later (take points and doubling windows are highly sensitive to gammon
-  rate). Predicting them from the start avoids a retrain when cube coaching
-  is added.
-- Requires the gammon/backgammon-aware terminal detection in `game.py`
-  above; the TD target at game end is the categorical outcome.
-
-Tests (in isolation):
-- Outputs are probabilities that sum to 1 (a valid distribution).
-- `flip` symmetry: win/lose outcomes swap under `flip`, so
-  `equity(board) ≈ -equity(flip(board))`. Write this early — it catches
-  encoding bugs.
-
-**Deferred: cube module.** Everything above is *cubeless*. Double/take/drop
-decisions are a separate layer on top of these outputs (not a bigger net):
-Janowski's cubeful-equity model + cube ownership for money play, or a
-match-equity table + score for match play. Addable later without retraining
-as long as the net already predicts the gammon splits.
-
-## 3. `agent/td_agent.py` — greedy play over the net
-
-For each afterstate from `generate_moves`, evaluate with `value_net`, pick
-the max. (This is why afterstates pay off — the agent just scores boards.)
-
-Tests: with a mock value net, picks the highest-valued afterstate; handles
-the dance (no moves) gracefully.
-
-## 4. `training/self_play.py` — generate games
-
-TD agent plays itself, recording the per-game sequence of positions.
-
-Tests: a game produces a well-formed trajectory (legal states, terminal
-end, sensible length distribution).
-
-## 5. `training/train.py` — TD(λ) learning loop
-
-Temporal-difference updates over self-play trajectories. Hardest to
-unit-test; lean on behavioral checks instead:
-- Learning-curve: win-rate vs the random agent climbs over training.
-- Cheap regression: a few gradient steps reduce TD error on a fixed batch.
-
-## 6. Coaching layer (the north star)
-
-The end goal is a **coach for the user**, not just a strong self-play agent.
-Built on top of the trained net + afterstate scoring:
-
-- **Move analysis:** for a position the user is in, score every legal
-  afterstate and rank them. Report equity-loss-per-move
-  (`best_equity - chosen_equity`) to flag blunders.
-- **Lookahead:** 0-ply (score afterstates directly) is the first cut, but
-  the net's estimate is noisy — use ~2-ply lookahead (or rollouts) to
-  sharpen the equity before reporting numbers. Afterstate design makes
-  n-ply straightforward.
-- **LLM explainability layer (wanted):** an LLM that explains *why* the
-  2-ply equity numbers come out as they do — especially **why one move
-  beats another**, in natural language, not just the raw equity delta. This
-  turns the equity engine into an actual teacher. It consumes the net's
-  outcome distribution + the per-move equities as structured input and
-  narrates the reasoning (e.g. "this play wins fewer gammons but is much
-  safer, and the safety is worth more here because...").
-- Cube coaching slots in here once the deferred cube module (step 2) exists.
-
-## Testing philosophy shift
-
-Through the engine and agents, prefer minimal hand-derived example tests
-(one per branch/leaf) plus property tests (every afterstate `is_valid`,
-pip count monotonic, `flip` symmetry). Once in `training/`, exact outputs
-stop being hand-derivable — shift to behavioral / learning-curve checks.
+## Testing philosophy
+Engine/agents: minimal hand-derived example tests (one per branch/leaf) +
+property tests (afterstates `is_valid`, absolute-anchored converters). In
+`training/`, exact outputs stop being hand-derivable — shift to behavioral /
+learning-curve checks.

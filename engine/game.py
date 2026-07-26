@@ -6,10 +6,12 @@ from .board import Board, flip, starting_board
 from .moves import generate_moves
 
 
-# An agent decides a turn: given the board (from its own perspective) and the
-# set of legal afterstates, it returns the one it wants to play. This is the
-# seam that keeps agents (random, TD, ...) swappable behind one interface.
-Agent = Callable[[Board, set[Board]], Board]
+# An agent decides a turn: given the board (from its own perspective), the
+# dice rolled, and the set of legal afterstates, it returns the one it wants
+# to play. This is the seam that keeps agents (random, human, TD, ...)
+# swappable. The dice are redundant for pure value agents (they score the
+# afterstates directly) but needed by e.g. a human UI to render move notation.
+Agent = Callable[[Board, tuple[int, int], set[Board]], Board]
 
 
 class Outcome(IntEnum):
@@ -59,7 +61,7 @@ def play_turn(board: Board, dice: tuple[int, int], agent: Agent) -> tuple[Board,
     after_states = generate_moves(board, dice)
     if not after_states:
         return (board, False)
-    new_board = agent(board, after_states)
+    new_board = agent(board, dice, after_states)
     return (new_board, True)
 
 

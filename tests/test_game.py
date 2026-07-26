@@ -58,7 +58,7 @@ def test_is_win_false_below_fifteen():
 
 # --- play_turn: the dance vs. the move --------------------------------
 
-def _explode(board, afterstates):
+def _explode(board, dice, afterstates):
     raise AssertionError("agent must not be consulted on a dance")
 
 def test_play_turn_dance_forfeits_without_consulting_agent():
@@ -73,7 +73,7 @@ def test_play_turn_returns_agents_choice():
     # picks is irrelevant, any fixed rule would do.
     board = starting_board()
     dice = (6, 3)
-    deterministic_pick = lambda b, afterstates: min(afterstates)
+    deterministic_pick = lambda b, dice, afterstates: min(afterstates)
     expected = min(generate_moves(board, dice))
     assert play_turn(board, dice, deterministic_pick) == (expected, True)
 
