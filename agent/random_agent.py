@@ -17,5 +17,5 @@ def random_agent(rng: random.Random) -> Agent:
     choosing blindly.
     """
     def choose(board: Board, dice: tuple[int, int], afterstates: set[Board]) -> Board:
-        return rng.choice(sorted(afterstates))  # ignores dice; afterstates suffice
+        return rng.choice(sorted(afterstates))  # ignores board and dice
     return choose
