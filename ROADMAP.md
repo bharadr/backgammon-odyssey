@@ -34,33 +34,98 @@ Environment + oracle details live in the `analysis-oracle-and-env` memory
 - [x] `coach/analysis.py` — `OutcomeDist` / `MoveAnalysis` / `Analysis` +
       `AnalysisProvider` protocol (equity is provider-supplied, not baked in).
 - [x] `coach/scoring.py` — `cubeless_equity` (opt-in scoring policy).
-- [x] `coach/gnubg_provider.py` — `Board <-> gnubg` converter, `GnubgProvider`.
-      Tested (converter anchored, provider validated on the opening).
-- [x] `ui/play.py` — interactive game vs the random agent (`python -m
-      ui.play`). **Playable (P1 done).**
+- [x] `coach/gnubg_provider.py` — `Board <-> gnubg` converter, `GnubgProvider`
+      with `evaluate_afterstate` (per-board eval) and `analyze` (rebuilt on OUR
+      generate_moves + eval + describe_move; never gnubg's best_move, which
+      analyses the wrong player on asymmetric boards). Tested, incl. asymmetric
+      positions and 0-ply vs 2-ply.
+- [x] `agent/skill_agent.py` — `SkillAgent`: softmax/temperature + epsilon
+      blunder-floor over an `AfterstateEvaluator`. The reusable policy for ANY
+      evaluator (gnubg now, trained nets later). Tested.
+- [x] `ui/play.py` — interactive game (`python -m ui.play`), now vs the
+      gnubg-backed `SkillAgent`. **Playable (P1 + P2 done).**
+- [x] `coach/features.py` — per-side `SideFeatures` for BOTH players (opponent
+      via `flip`). Canonical `point_counts` (24-tuple, this side's checkers) +
+      derived named concepts: blots, points-made, stripped-points,
+      stacked-points, anchors + advanced-anchor, prime-ranges + longest-prime,
+      home-board points, checkers-in-opponent-home + on-deep-points, bar, off;
+      + `pip_lead`. Named fields (even where derivable) so B2 deltas are plain
+      field-diffs. Tested (incl. prime runs). More deferred (see P3).
 
 ## Track 1 — the Coach
 
-### P2 — `SkillAgent` (a tunable, beatable opponent)
-Wrap `GnubgProvider`: score the legal afterstates and **softmax-sample by
-temperature** instead of always taking the best. τ→0 = superhuman; higher τ =
-weaker. Optionally cap to moves within ε of best (no catastrophic blunders).
-Calibrate τ by measuring equity-loss-per-move vs gnubg-best (intermediate ≈
-0.02-0.03/move). Drops into `play_interactive` in place of `random_agent`.
-- Note: doesn't need the dice — it scores the afterstates the loop hands it.
+### P2 — `SkillAgent` (DONE; τ uncalibrated)
+Scores legal afterstates via an `AfterstateEvaluator` and **softmax-samples by
+temperature** (τ→0 = superhuman; higher = weaker) with an ε blunder-floor.
+Wired into `play_interactive` as the opponent at `OPPONENT_TEMPERATURE = 0.1`.
+- **Still to do (optional):** calibrate τ by measuring equity-loss-per-move vs
+  gnubg-best (intermediate ≈ 0.02-0.03/move); 0.1 is a guess.
 
-### P3 — the explainability layer (the MVP feature)
-Turn an `Analysis` into natural language: *why* the best play beats the
-alternatives, grounded in the `OutcomeDist` deltas + equity-loss.
-- **Prompt an existing LLM (few-shot), do NOT fine-tune** — the analysis is
-  done by the engine; the LLM narrates grounded evidence. Fine-tuning's cost
-  is a dataset we don't have; prompt + good grounding is enough.
-- Guard against the rationalization failure: feed decomposed evidence
-  (outcome-distribution deltas, position features like shots/blots/pips), and
-  constrain the model to explain only from the numbers, never invent reasons.
-- Consider active-recall UX: predict-then-reveal (you guess, then it explains
-  the gap) — stickier for building intuition than passive reading.
-- Cube coaching slots in here once the cube module (deferred) exists.
+### P3 — the coach: analysis + explainability (the MVP feature)
+
+**Analysis backend — DONE:** `GnubgProvider.analyze(board, dice)` returns the
+legal plays ranked by equity (our generate_moves + evaluate_afterstate +
+describe_move), tested on asymmetric positions and the dance.
+
+**The explainability layer** turns an `Analysis` + the player's chosen move
+into a natural-language "why," grounded in exact numbers (never a raw board
+the LLM would misread):
+
+- **B1 `coach/features.py` — DONE.** Per-side `SideFeatures` for BOTH players
+  (opponent via `flip`): pips, blots, points-made (locations), home-board
+  points, checkers-back + deep-back, bar, off; + `pip_lead`. **Decision: the
+  coach does NOT render the board** — features are the complete structural
+  input, so the LLM never sees a raw board to misread.
+- **B2 `coach/evidence.py` (next):** assemble the LLM input from an `Analysis`
+  + the chosen move. NO board render. Include: the roll; `best` and `chosen`
+  plays (notation, equity; `chosen` also equity-loss + rank "Kth of N"; outcome
+  distribution; and `features()` of each resulting board — both sides); the
+  other top-5 as `alternatives` (notation + equity + equity-loss only — full
+  features on all 5 is noise); chosen-vs-best `deltas` (outcome-dist + key
+  feature diffs); a dance flag. Rank/equity-loss live here, not in features.py.
+- **B3 `coach/explain.py`:** `explain(evidence, llm)` with an INJECTED `llm`
+  callable (stub in tests). Prompt = coach role + hard constraint (explain only
+  from the provided numbers; features are authoritative; never invent) +
+  few-shot + the evidence. **Few-shot an existing model; do NOT fine-tune.**
+- **B4:** real `llm` via the Anthropic SDK (behind the injected interface).
+- **B5 `coach/cli.py` (`python -m coach`):** position + dice + your move →
+  print ranked analysis + explanation. Manual acceptance: feed a position that
+  confused you on Galaxy.
+- **Input-format wrinkle to resolve:** we support gnubg Position IDs; Galaxy/XG
+  use XGID (different format). Decide: gnubg IDs, an XGID parser, or manual
+  board entry.
+- **Active-recall UX (optional):** predict-then-reveal.
+- Cube coaching slots in here once the deferred cube module exists.
+
+### Deferred coach features (NOT yet added — track these)
+The coach sees the Tier-1 features above (both sides), no raw board. When
+explanations feel thin, ADD a feature here — never reintroduce the error-prone
+board. Stack heights and stripped points are now explicit fields (for clean B2
+deltas); spare *counts* stay implicit in `point_counts` (the B3 prompt defines
+"spare"). Genuinely-still-missing, roughly by value:
+
+1. **Shot counts** (highest value — the key safety signal): "odds the opponent
+   hits one of my blots", as N/36 (%). Needs ENUMERATION the LLM can't do, so
+   compute by REUSING the engine, not hand-coded geometry: for the afterstate,
+   `opp_view = flip(after)`; for each of the 21 distinct rolls,
+   `generate_moves(opp_view, roll)`; a roll hits if any resulting move has
+   `opp_bar_count > opp_view.opp_bar_count` (a hit on my checker in the flipped
+   frame); sum roll weights (1/36 doubles, 2/36 not). Handles blocks,
+   indirects, doubles, and the bar for free. "Can hit" (the threat), not
+   "would hit".
+2. **Checkers trapped behind a prime** (cross-side): a prime only matters
+   relative to the opponent's checkers behind it. Needs BOTH sides' positions
+   (my `prime_ranges` + opp `point_counts`), so it lives at the position level,
+   not `SideFeatures`. Makes `prime_ranges` actionable.
+3. **Race wastage / crossovers.** Pip count alone misses bear-off wastage and
+   how many crossovers remain; needs distribution math beyond a pip total.
+4. **Builders for a specific point** (low priority): which spares bear on making
+   a target point. Tactical/derived; `point_counts` already exposes the raw
+   spare material, so add only if explanations need it spelled out.
+
+Also **perspective**: opponent features are in the OPPONENT's own numbering
+(their 5-point = my 20-point). B3's prompt MUST state this so the coach doesn't
+mis-attribute points.
 
 ## Track 2 — the RL benchmark
 

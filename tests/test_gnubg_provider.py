@@ -11,7 +11,9 @@ from coach.gnubg_provider import (
     board_to_gnubg,
     position_id,
 )
+from engine.moves import generate_moves
 from tests.test_board import midgame_boards
+from tests.test_moves import mk
 
 # The canonical gnubg Position ID for the standard starting position.
 START_ID = "4HPwATDgc/ABMA"
@@ -98,3 +100,46 @@ def test_evaluate_afterstate_known_equity():
     # the mover. (Deterministic 0-ply; small slack for gnubg version drift.)
     outcome = GnubgProvider(plies=0).evaluate_afterstate(FIVE_POINT_AFTER)
     assert abs(cubeless_equity(outcome) - FIVE_POINT_EQUITY) < 0.01
+
+
+# --- analyze (our move-gen + gnubg eval + our notation) ----------------
+
+# an ASYMMETRIC (4,4) midgame position -- the kind that crashed the old
+# best_move-based analyze (it analysed the opponent, producing afterstates our
+# engine rejected). generate_moves gives 56 legal plays here.
+_ASYM = Board(points=(-1, 0, 0, 0, 0, 5, 0, 3, 0, -1, 0, -5,
+                      5, 0, 0, 0, -3, 0, -5, 0, 0, 0, 0, 2),
+              bar_count=0, opp_bar_count=0, off_count=0, opp_off_count=0)
+
+def test_analyze_opening_31():
+    result = GnubgProvider(plies=0).analyze(starting_board(), (3, 1))
+    assert len(result.moves) == len(generate_moves(starting_board(), (3, 1)))
+    assert set(result.best.notation.split()) == {"8/5", "6/5"}   # make the 5-point
+    assert abs(result.best.equity - FIVE_POINT_EQUITY) < 0.01
+    eqs = [m.equity for m in result.moves]
+    assert eqs == sorted(eqs, reverse=True)                      # ranked best-first
+
+def test_analyze_asymmetric_position_is_legal_and_ranked():
+    result = GnubgProvider(plies=0).analyze(_ASYM, (4, 4))
+    legal = generate_moves(_ASYM, (4, 4))
+    # every analysed afterstate is one of OUR legal moves -- the regression the
+    # old version failed (it returned boards our engine considered illegal).
+    assert {m.after_state for m in result.moves} == legal
+    eqs = [m.equity for m in result.moves]
+    assert eqs == sorted(eqs, reverse=True)
+    assert all(result.equity_loss(m) >= 0 for m in result.moves)
+    assert all(m.notation for m in result.moves)                 # describe_move never raised
+
+def test_analyze_dance_has_no_moves():
+    dancing = mk({18: -2, 21: -2}, bar=1)   # on the bar, both entry points walled
+    result = GnubgProvider(plies=0).analyze(dancing, (6, 3))
+    assert result.moves == ()
+
+def test_analyze_two_ply_differs_from_zero_ply():
+    # deeper search re-evaluates: same set of legal moves, but the equities
+    # shift (confirms plies actually flows through to gnubg's evaluation).
+    board, dice = starting_board(), (3, 1)
+    eq0 = {m.after_state: m.equity for m in GnubgProvider(plies=0).analyze(board, dice).moves}
+    eq2 = {m.after_state: m.equity for m in GnubgProvider(plies=2).analyze(board, dice).moves}
+    assert eq0.keys() == eq2.keys()   # move generation is ply-independent
+    assert eq0 != eq2                 # but the evaluations differ with depth

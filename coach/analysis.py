@@ -29,7 +29,7 @@ class OutcomeDist:
 
 @dataclass(frozen=True)
 class MoveAnalysis:
-    after_state: Board                 # resulting position, in the mover's perspective
+    after_state: Board                # resulting position, in the mover's perspective
     outcome: OutcomeDist              # oriented to the player who made the move
     equity: float                     # scalar valuation supplied by the provider
                                       #   (higher = better for the mover)

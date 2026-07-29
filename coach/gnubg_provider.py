@@ -1,8 +1,10 @@
 import gnubg_nn
 
 from engine.board import Board
-from coach.analysis import OutcomeDist
-
+from coach.analysis import OutcomeDist, MoveAnalysis, Analysis
+from engine.moves import generate_moves
+from coach.scoring import cubeless_equity
+from engine.notation import describe_move
 
 # --- Board <-> gnubg's [2][25] representation -------------------------------
 # gnubg board: g[0] = side-to-move's checkers, g[1] = opponent's, each from
@@ -78,3 +80,27 @@ class GnubgProvider:
         verified against the known 8/5 6/5 equity)."""
         probs = gnubg_nn.probabilities(board_to_gnubg(board), self.plies)
         return _to_mover_perspective(probs)
+
+    def analyze(self, position: Board, dice: tuple[int, int]) -> Analysis:
+        """Rank every legal play for `dice` from `position`, best-first.
+
+        Uses OUR generate_moves for the legal afterstates, gnubg for the
+        per-afterstate evaluation, and describe_move for notation -- never
+        gnubg's best_move (which analyses the wrong player on asymmetric
+        boards). `moves` is empty on the dance (no legal play).
+        """
+        move_analysis_list = []
+        for new_board in generate_moves(position, dice):
+            outcome_dist = self.evaluate_afterstate(new_board)
+            move_analysis_list.append(MoveAnalysis(after_state=new_board,
+                    outcome=outcome_dist,
+                    equity=cubeless_equity(outcome_dist),
+                    notation=describe_move(position, new_board, dice)
+                )
+            )
+        sorted_move_analysis_list = sorted(move_analysis_list, key=lambda x: x.equity, reverse=True)
+        return Analysis(
+            position=position,
+            dice=dice,
+            moves=tuple(sorted_move_analysis_list),
+        )
