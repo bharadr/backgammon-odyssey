@@ -1,5 +1,7 @@
 # tests/test_board.py
-from engine.board import Board, starting_board, flip, pip_count, is_valid, render
+import re
+
+from engine.board import Board, starting_board, flip, pip_count, is_valid, render, _cell, ROWS
 
 
 # --- Fixtures: boards to test against ---------------------------------
@@ -115,4 +117,46 @@ def test_flip_conserves_checker_totals():
     for b in ALL_BOARDS:
         assert is_valid(b)
         assert is_valid(flip(b))
+
+
+# --- render (display) -------------------------------------------------
+
+_BAR_OFF_BOARD = Board(points=(0, 0, 1, 2, 3, 5, 0, 0, 0, 0, 0, 0,
+                               0, 0, 0, 0, 0, 0, -4, -3, -2, -2, 0, 0),
+                       bar_count=2, opp_bar_count=1, off_count=2, opp_off_count=3)
+
+_ANSI = re.compile(r"\033\[[0-9;]*m")
+
+
+def test_render_shows_pips_race_bar_and_off():
+    out = render(starting_board(), color=False)
+    lines = out.splitlines()
+    assert lines[0] == "You (X): 167 pips     Opp (O): 167 pips     (even race)"
+    assert any(line.strip() == "BAR" for line in lines)   # the bar column is drawn
+    assert "Off -- you: 0   opp: 0" in out
+
+def test_cell_stacks_symbols_and_overflows_to_a_count():
+    assert _cell(0, 0) == ""                                   # empty point
+    assert [_cell(3, r) for r in range(ROWS)] == ["X", "X", "X", "", ""]
+    assert [_cell(ROWS, r) for r in range(ROWS)] == ["X"] * ROWS   # full column, no count
+    # ROWS+1 is the first overflow: symbols fill ROWS-1 rows, then the count
+    assert [_cell(ROWS + 1, r) for r in range(ROWS)] == ["X", "X", "X", "X", "6"]
+    assert [_cell(-8, r) for r in range(ROWS)] == ["O", "O", "O", "O", "8"]  # opponent
+    assert _cell(8, ROWS) == ""                                # past the drawn rows
+
+
+def test_render_race_status_reflects_the_pip_difference():
+    # my 5-stack on the 6-point (10 pips) + 2 on the bar (50) vs the opp's
+    # 11 checkers deep in their home; I trail badly.
+    out = render(_BAR_OFF_BOARD, color=False)
+    assert out.splitlines()[0] == "You (X): 106 pips     Opp (O): 78 pips     (you trail by 28)"
+    assert "Off -- you: 2   opp: 3" in out
+
+def test_color_render_keeps_the_layout_identical():
+    # color must only inject ANSI codes, never shift a column: stripping the
+    # codes from the colored render must reproduce the plain render exactly.
+    for b in (starting_board(), _BAR_OFF_BOARD):
+        colored = render(b, color=True)
+        assert "\033[" in colored                          # color was actually applied
+        assert _ANSI.sub("", colored) == render(b, color=False)
 
