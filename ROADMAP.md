@@ -50,7 +50,26 @@ Environment + oracle details live in the `analysis-oracle-and-env` memory
       stacked-points, anchors + advanced-anchor, prime-ranges + longest-prime,
       home-board points, checkers-in-opponent-home + on-deep-points, bar, off;
       + `pip_lead`. Named fields (even where derivable) so B2 deltas are plain
-      field-diffs. Tested (incl. prime runs). More deferred (see P3).
+      field-diffs. Tested (incl. prime runs).
+- [x] `coach/evidence.py` — `build_evidence` assembles the LLM bundle from an
+      `Analysis` + chosen afterstate: ranked `best`/`chosen`/`alternatives`,
+      equity-loss, outcome + systematic feature deltas (chosen−best), dance
+      flag. Pure; unit-tested + one gnubg composition test.
+- [x] `coach/explain.py` — `SYSTEM_PROMPT` + pure `render_evidence` +
+      `explain(evidence, llm)` over an injected `(system, user) -> str` LLM.
+      Tested with a stub; verified rendering on a real opening.
+- [x] `coach/llm.py` + `coach/positions.py` + `coach/cli.py` +
+      `coach/__main__.py` — **runnable quiz (`python -m coach`)**: curated board
+      + random roll → pick a play → coach critique. `AnthropicLLM` +
+      `make_llm()` behind the seam; runs offline without a key. Tested + e2e.
+- [x] `coach/grade.py` + `coach/game_coach.py` + `ui/play.py` hook —
+      **coach-in-game (`python -m ui.play`)**: after each of your moves, an
+      instant `grade` verdict (gnubg/XG bands); blunders auto-narrate, lesser
+      mistakes offer the explanation on demand (`?`), best plays flow on; an
+      end-of-game report card (best-play %, avg equity lost, worst move).
+      Reuses the opponent's provider. Pure `grade` + injected `GameCoach`
+      (output_fn/input_fn/threshold); tested (verdict bands, auto-narrate gate,
+      `?` on demand, no-pause-on-best, report card, game-loop hook) + e2e. More deferred (see P3).
 
 ## Track 1 — the Coach
 
@@ -76,21 +95,30 @@ the LLM would misread):
   points, checkers-back + deep-back, bar, off; + `pip_lead`. **Decision: the
   coach does NOT render the board** — features are the complete structural
   input, so the LLM never sees a raw board to misread.
-- **B2 `coach/evidence.py` (next):** assemble the LLM input from an `Analysis`
-  + the chosen move. NO board render. Include: the roll; `best` and `chosen`
-  plays (notation, equity; `chosen` also equity-loss + rank "Kth of N"; outcome
-  distribution; and `features()` of each resulting board — both sides); the
-  other top-5 as `alternatives` (notation + equity + equity-loss only — full
-  features on all 5 is noise); chosen-vs-best `deltas` (outcome-dist + key
-  feature diffs); a dance flag. Rank/equity-loss live here, not in features.py.
-- **B3 `coach/explain.py`:** `explain(evidence, llm)` with an INJECTED `llm`
-  callable (stub in tests). Prompt = coach role + hard constraint (explain only
-  from the provided numbers; features are authoritative; never invent) +
-  few-shot + the evidence. **Few-shot an existing model; do NOT fine-tune.**
-- **B4:** real `llm` via the Anthropic SDK (behind the injected interface).
-- **B5 `coach/cli.py` (`python -m coach`):** position + dice + your move →
-  print ranked analysis + explanation. Manual acceptance: feed a position that
-  confused you on Galaxy.
+- **B2 `coach/evidence.py` — DONE.** `build_evidence(analysis, chosen_after)`
+  → `Evidence`: the roll; `best`/`chosen` as `PlayEvidence` (notation, equity,
+  equity-loss, rank "K of N", outcome dist, both-side `features()`); `top_n`
+  `alternatives` (notation + equity + equity-loss only, excluding best/chosen);
+  `outcome_delta` and a SYSTEMATIC `feature_delta` (per-side tuple diffs
+  added/removed + scalar diffs + sparse `point_shifts`), all chosen−best;
+  `is_dance` flag. Pure (no gnubg/LLM) so unit-tested on hand-built analyses,
+  plus one end-to-end composition test. Afterstates stay mover-perspective
+  (`features(after).me` = coached player; a hit shows as `opp.on_bar` rising).
+- **B3 `coach/explain.py` — DONE.** `explain(evidence, llm)` with an INJECTED
+  `llm` callable `(system, user) -> str` (stub in tests). Split into a static
+  `SYSTEM_PROMPT` (coach role + hard constraints + term definitions +
+  perspective rule) and a pure `render_evidence` (facts → user message);
+  verified on a real opening 3-1. Few-shot deferred (zero-shot is enough for the
+  first demo). **Few-shot an existing model; do NOT fine-tune.**
+- **B4 `coach/llm.py` — DONE.** `AnthropicLLM` implements the `(system, user)
+  -> str` seam via the SDK (lazy import; reads `ANTHROPIC_API_KEY`; model from
+  `COACH_MODEL`, default `claude-sonnet-5`).
+- **B5 `coach/cli.py` + `coach/__main__.py` — DONE (`python -m coach`).**
+  Interactive demo: random curated board (`coach/positions.py`, 5 themed
+  positions) + random roll → list every legal play (notation only, no spoilers)
+  → student picks → reveal rank/equity-loss + `render_evidence` + coach prose.
+  Runs offline without a key (prints the evidence + a note). Flow unit-tested
+  with stubs; verified end-to-end through real gnubg.
 - **Input-format wrinkle to resolve:** we support gnubg Position IDs; Galaxy/XG
   use XGID (different format). Decide: gnubg IDs, an XGID parser, or manual
   board entry.
