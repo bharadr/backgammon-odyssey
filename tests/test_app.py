@@ -5,7 +5,7 @@ import gradio as gr
 
 from engine.board import starting_board
 from coach.analysis import Analysis, MoveAnalysis, OutcomeDist
-from coach.app import (_board_html, _play_button_updates, _disable_all_buttons,
+from coach.app import (_play_button_updates, _disable_all_buttons,
                        _new_round_data, build_app)
 from coach.positions import POSITIONS
 from tests.test_moves import mk
@@ -21,13 +21,6 @@ class _StubProvider:
 def _move(board, equity, notation):
     return MoveAnalysis(after_state=board, outcome=OutcomeDist((equity + 1) / 2, 0, 0, 0, 0),
                         equity=equity, notation=notation)
-
-
-def test_board_html_is_plain_monospace():
-    html = _board_html(starting_board())
-    assert html.startswith("<pre") and html.endswith("</pre>")
-    assert "You (X): 167 pips" in html
-    assert "\033[" not in html                    # no ANSI escapes in the browser
 
 
 def test_play_button_updates_shows_and_enables_k_plays_hides_the_rest():

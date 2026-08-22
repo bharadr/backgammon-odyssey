@@ -17,9 +17,9 @@ import random
 
 import gradio as gr
 
-from engine.board import Board, render
 from engine.game import roll_dice
 from coach.analysis import AnalysisProvider, MoveAnalysis
+from coach.board_svg import board_svg
 from coach.evidence import build_evidence
 from coach.explain import explain, LLM
 from coach.grade import grade
@@ -30,16 +30,9 @@ from coach.positions import POSITIONS
 MAX_PLAYS = 40   # fixed pool of play-buttons (curated positions never exceed this)
 
 
-def _board_html(board: Board) -> str:
-    """The board as a monospace HTML block (plain -- a browser can't read ANSI)."""
-    return f"<pre style='line-height:1.15'>{render(board, color=False)}</pre>"
-
-
-def _roll_md(dice: tuple[int, int], has_moves: bool = True) -> str:
-    text = f"**You roll: {dice[0]}-{dice[1]}**"
-    if not has_moves:
-        text += "\n\n*No legal move -- you dance (forfeit the turn).*"
-    return text
+def _status_md(has_moves: bool) -> str:
+    """A caption under the board -- empty normally, the dance note when stuck."""
+    return "" if has_moves else "*No legal move -- you dance (forfeit the turn).*"
 
 
 def _play_button_updates(menu: list[MoveAnalysis], pool_size: int = MAX_PLAYS) -> list:
@@ -80,20 +73,20 @@ def build_app(provider: AnalysisProvider | None = None, llm: LLM | None = None,
     def new_round():
         position, dice, analysis, menu = _new_round_data(provider, rng)
         return (f"### {position.name}\n{position.theme}",
-                _board_html(position.board), _roll_md(dice, bool(menu)),
+                board_svg(position.board, dice), _status_md(bool(menu)),
                 "", "", gr.update(visible=False), (analysis, menu),
                 *_play_button_updates(menu))
 
     def retry(state):
         analysis, menu = state
-        return (_board_html(analysis.position), _roll_md(analysis.dice),
+        return (board_svg(analysis.position, analysis.dice), _status_md(True),
                 "", "", gr.update(visible=False), *_play_button_updates(menu))
 
     def on_pick(i: int, state):
         analysis, menu = state
         chosen = menu[i]
         evidence = build_evidence(analysis, chosen.after_state)
-        return (_board_html(chosen.after_state),
+        return (board_svg(chosen.after_state, analysis.dice),
                 f"### Verdict\n{grade(evidence).line}",
                 f"### Coach\n{explain(evidence, llm)}",
                 gr.update(visible=True), *_disable_all_buttons())
@@ -105,7 +98,7 @@ def build_app(provider: AnalysisProvider | None = None, llm: LLM | None = None,
             with gr.Column(scale=3):
                 header = gr.Markdown()
                 board_view = gr.HTML()
-                roll = gr.Markdown()
+                status = gr.Markdown()
                 gr.Markdown("**Your play:**")
                 with gr.Row():
                     play_buttons = [gr.Button(visible=False) for _ in range(MAX_PLAYS)]
@@ -116,8 +109,8 @@ def build_app(provider: AnalysisProvider | None = None, llm: LLM | None = None,
                 verdict_view = gr.Markdown()
                 coach_view = gr.Markdown()
 
-        after_new = [header, board_view, roll, verdict_view, coach_view, retry_btn, state] + play_buttons
-        after_retry = [board_view, roll, verdict_view, coach_view, retry_btn] + play_buttons
+        after_new = [header, board_view, status, verdict_view, coach_view, retry_btn, state] + play_buttons
+        after_retry = [board_view, status, verdict_view, coach_view, retry_btn] + play_buttons
         after_pick = [board_view, verdict_view, coach_view, retry_btn] + play_buttons
 
         app.load(new_round, outputs=after_new)
