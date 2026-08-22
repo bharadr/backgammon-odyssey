@@ -27,7 +27,8 @@ from coach.gnubg_provider import GnubgProvider
 from coach.llm import make_llm
 from coach.positions import POSITIONS
 
-MAX_PLAYS = 40   # fixed pool of play-buttons (curated positions never exceed this)
+MAX_PLAYS = 40       # fixed pool of play-buttons (curated positions never exceed this)
+PLAYS_PER_ROW = 5    # laid out as a tidy grid rather than one long row
 
 
 def _status_md(has_moves: bool) -> str:
@@ -100,8 +101,12 @@ def build_app(provider: AnalysisProvider | None = None, llm: LLM | None = None,
                 board_view = gr.HTML()
                 status = gr.Markdown()
                 gr.Markdown("**Your play:**")
-                with gr.Row():
-                    play_buttons = [gr.Button(visible=False) for _ in range(MAX_PLAYS)]
+                play_buttons = []                       # one fixed pool, laid out as a grid
+                while len(play_buttons) < MAX_PLAYS:
+                    with gr.Row():
+                        row_n = min(PLAYS_PER_ROW, MAX_PLAYS - len(play_buttons))
+                        play_buttons += [gr.Button(visible=False, min_width=110)
+                                         for _ in range(row_n)]
                 with gr.Row():
                     retry_btn = gr.Button("Retry position", visible=False)
                     new_btn = gr.Button("New position", variant="primary")

@@ -1,5 +1,5 @@
 from engine.board import Board, starting_board, is_valid
-from engine.moves import BAR_IDX, extend, generate_moves, move_one
+from engine.moves import BAR_IDX, OFF, extend, generate_moves, generate_move_paths, move_one
 from tests.test_board import midgame_boards
 
 
@@ -253,3 +253,46 @@ def test_generate_moves_maxplay_drops_short_play():
         mk({7: 1, 4: 1, 8: -2, 1: -2}),   # 10->7, then 6->4
     }
     assert mk({10: 1, 3: 1, 8: -2, 1: -2}) not in result  # the short play
+
+# --- generate_move_paths: hop-paths that reproduce generate_moves ------
+
+def _apply_path(board: Board, path: tuple) -> Board:
+    for src, _dst, die in path:
+        board = move_one(board, src, die)
+    return board
+
+
+def test_move_paths_reproduce_generate_moves_afterstates():
+    # generate_moves is the oracle: applying every returned path must land on
+    # exactly the set of legal afterstates. Covers doubles, larger-die, bear-off.
+    boards = [starting_board(), *midgame_boards(),
+              mk({0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 5})]      # all home (bear-off)
+    for board in boards:
+        for dice in [(3, 1), (6, 6), (5, 2), (6, 5), (2, 2)]:
+            paths = generate_move_paths(board, dice)
+            assert {_apply_path(board, p) for p in paths} == generate_moves(board, dice)
+            assert len({len(p) for p in paths}) <= 1          # all paths share max length
+
+
+def test_move_paths_empty_on_the_dance():
+    dancing = mk({18: -2, 19: -2, 20: -2, 21: -2, 22: -2, 23: -2}, bar=1)  # every entry walled
+    assert generate_move_paths(dancing, (6, 3)) == set()
+    assert generate_moves(dancing, (6, 3)) == set()           # agrees with the oracle
+
+
+def test_doubles_paths_use_all_four_dice_when_possible():
+    paths = generate_move_paths(starting_board(), (2, 2))
+    assert paths and all(len(p) == 4 for p in paths)
+
+
+def test_hops_record_source_destination_and_die():
+    for path in generate_move_paths(starting_board(), (3, 1)):
+        for src, dst, die in path:
+            assert die in (3, 1)
+            assert 0 <= src <= BAR_IDX
+            assert dst == OFF or 0 <= dst <= 23
+
+
+def test_bear_off_hops_use_the_off_sentinel():
+    paths = generate_move_paths(mk({0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 5}), (6, 5))
+    assert any(dst == OFF for p in paths for _src, dst, _die in p)

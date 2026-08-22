@@ -2,6 +2,50 @@ from .board import Board
 
 
 BAR_IDX = 24
+OFF = -1        # sentinel destination for a bear-off hop
+
+def _max_play_pile(board: Board, dice: tuple[int, int], walk) -> set[tuple]:
+    """Explore `dice` under the max-play + larger-die rules, returning the winning
+    pile of (item, depth) leaves.
+
+    `walk` is the tree-walker: `extend` (leaves are boards) or `_extend_paths`
+    (leaves are hop paths). The selection depends only on the depth field, so it's
+    identical for both -- this is the single home of the subtle ordering rules.
+    """
+    if dice[0] == dice[1]:
+        # Doubles: four identical dice, ordering is meaningless -- one exploration,
+        # four levels deep. The larger-die rule can't apply (one die value).
+        return walk(board, [dice[0]] * 4)
+
+    # Non-doubles: (hi, lo) and (lo, hi) can reach different leaves, because the
+    # intermediate position after the first die differs. Each call implicitly
+    # records which die went first. Depth = number of dice consumed.
+    hi, lo = max(dice[0], dice[1]), min(dice[0], dice[1])
+    hi_pile = walk(board, [hi, lo])
+    lo_pile = walk(board, [lo, hi])
+    max_depth_hi = max(d for _, d in hi_pile)
+    max_depth_lo = max(d for _, d in lo_pile)
+
+    if max_depth_hi == 1 and max_depth_lo == 1:
+        # Only single dice playable, and both are -> law: play the larger. Every
+        # depth-1 leaf in hi_pile played `hi` first, so keeping hi_pile IS the
+        # larger-die rule. (Must precede the equality test, or lo-only leaks.)
+        return hi_pile
+    if max_depth_lo == max_depth_hi:
+        return hi_pile | lo_pile                # equal depth: both orderings lawful
+    # Unequal depth: max-play dominates even the larger-die preference -- if only
+    # lo-first can use both dice, you are forced to play lo first.
+    return hi_pile if max_depth_hi > max_depth_lo else lo_pile
+
+
+def _max_depth_only(pile: set[tuple]) -> set:
+    """Keep only the deepest (max-play) leaves; {} on the dance (max depth 0).
+    The walkers always return >=1 leaf, so max() is safe on a non-empty pile."""
+    max_depth = max(d for _, d in pile)
+    if max_depth == 0:
+        return set()
+    return {item for item, depth in pile if depth == max_depth}
+
 
 def generate_moves(board: Board, dice: tuple[int, int]) -> set[Board]:
     """The set of legal afterstates: every distinct position reachable
@@ -15,48 +59,7 @@ def generate_moves(board: Board, dice: tuple[int, int]) -> set[Board]:
     Returns {} when no legal play exists (the "dance"); the caller must
     treat the empty set as a forfeited turn.
     """
-    if dice[0] == dice[1]:
-        # Doubles: four identical dice, so ordering is meaningless —
-        # one exploration, four levels deep. The larger-die rule can't
-        # apply (there's only one die value), so no special cases below.
-        pile = extend(board, [dice[0]] * 4)
-    else:
-        # Non-doubles: (hi, lo) and (lo, hi) can reach different boards,
-        # because the intermediate position after the first die differs.
-        # Crucially, each pile *implicitly* records which die was played
-        # first — that fact is encoded by the call, not stored in the data.
-        hi, lo = max(dice[0], dice[1]), min(dice[0], dice[1])
-        hi_pile = extend(board, [hi, lo])
-        lo_pile = extend(board, [lo, hi])
-
-        # Depth = number of dice consumed. Max-play rule: you must play
-        # as many dice as possible, so deeper piles dominate shallower ones.
-        max_depth_hi = max(d for _, d in hi_pile)
-        max_depth_lo = max(d for _, d in lo_pile)
-
-        if max_depth_hi == 1 and max_depth_lo == 1:
-            # The ONE asymmetric cell: only single dice are playable, and
-            # both are. Law: you must play the larger. Every depth-1 board
-            # in hi_pile played `hi` first (by construction of the call),
-            # so keeping hi_pile alone IS the larger-die rule.
-            # NOTE: this test must precede the general equality test below,
-            # or it gets shadowed and illegal lo-only moves leak through.
-            pile = hi_pile
-        elif max_depth_lo == max_depth_hi:
-            # Equal depth (0 or 2): both orderings equally lawful — merge.
-            pile = hi_pile | lo_pile
-        else:
-            # Unequal depth: max-play dominates everything, even the
-            # larger-die preference — if only the lo-first ordering can
-            # use both dice, you are FORCED to play lo first.
-            pile = hi_pile if max_depth_hi > max_depth_lo else lo_pile
-
-    # extend() always returns ≥1 tuple (a fully blocked branch returns the
-    # original board at depth 0), so max() is safe on a non-empty pile.
-    max_depth = max(d for _, d in pile)
-    if max_depth == 0:
-        return set()  # the dance: no legal move anywhere
-    return {b for b, depth in pile if depth == max_depth}
+    return _max_depth_only(_max_play_pile(board, dice, extend))
 
 def extend(board: Board, dice: list[int], depth: int = 0) -> set[tuple[Board, int]]:
     """Explore the move tree for `dice` played in this exact order.
@@ -94,6 +97,46 @@ def extend(board: Board, dice: list[int], depth: int = 0) -> set[tuple[Board, in
         # makes it a leaf by blockage.
         return {(board, depth)}
     return results
+
+
+def _extend_paths(board: Board, dice: list[int], path: tuple = ()) -> set[tuple[tuple, int]]:
+    """Like `extend`, but records the hop PATH taken to each leaf.
+
+    Returns {(path, depth)} for every leaf, where `path` is a tuple of hops and
+    a hop is (src, dst, die): src is a point index (24 = bar), dst a point index
+    or OFF (bear-off), die the pips used. depth == len(path). Mirrors `extend`'s
+    leaf-by-success / leaf-by-blockage structure exactly.
+    """
+    if not dice:
+        return {(path, len(path))}                       # leaf by success
+
+    die, rest = dice[0], dice[1:]
+    candidates = [BAR_IDX] if board.bar_count > 0 else \
+        [idx for idx in range(23, -1, -1) if board.points[idx] > 0]
+
+    results: set[tuple[tuple, int]] = set()
+    for src in candidates:
+        new_board = move_one(board, src, die)
+        if new_board is not None:
+            dst = src - die
+            hop = (src, dst if dst >= 0 else OFF, die)
+            results |= _extend_paths(new_board, rest, path + (hop,))
+
+    if not results:
+        return {(path, len(path))}                       # leaf by blockage
+    return results
+
+
+def generate_move_paths(board: Board, dice: tuple[int, int]) -> set[tuple]:
+    """Every legal max-play as a hop PATH -- a tuple of (src, dst, die) hops.
+
+    The path-carrying twin of `generate_moves`: same rules (max-play, larger-die,
+    doubles) but it returns the ordered hop sequences instead of afterstates, and
+    keeps BOTH orderings of a non-double roll so a UI can let either checker move
+    first. Applying a returned path reproduces one of `generate_moves`' afterstates.
+    All returned paths share the max-play length; empty on the dance.
+    """
+    return _max_depth_only(_max_play_pile(board, dice, _extend_paths))
 
 
 def move_one(board: Board, src: int, die: int) -> Board | None:
