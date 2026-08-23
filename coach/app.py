@@ -97,7 +97,7 @@ def _new_state(provider: AnalysisProvider, rng: random.Random) -> dict:
 
 def build_app(provider: AnalysisProvider | None = None, llm: LLM | None = None,
               rng: random.Random | None = None) -> gr.Blocks:
-    provider = provider or GnubgProvider()
+    provider = provider or GnubgProvider(plies=2)   # 2-ply: stronger judgement, slower
     llm = llm or make_llm()
     rng = rng or random.Random()
 

@@ -78,7 +78,7 @@ OPPONENT_TEMPERATURE = 0.1
 
 def main() -> None:
     rng = random.Random()
-    provider = GnubgProvider()
+    provider = GnubgProvider(plies=2)   # 2-ply for both the opponent and the coach
     opponent = SkillAgent(provider, OPPONENT_TEMPERATURE, rng)
     coach = GameCoach(provider, make_llm())
     print("Backgammon -- you are X (moving toward off), opponent is O "

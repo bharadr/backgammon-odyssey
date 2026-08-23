@@ -36,7 +36,7 @@ POSITIONS: tuple[CuratedPosition, ...] = (
     ),
     CuratedPosition(
         name="Holding game",
-        theme="You hold the 20-point anchor while trailing in the race.",
+        theme="You hold the 20-point anchor while narrowly ahead in the race.",
         board=Board(
             points=(0, 0, 1, 0, 2, 3, 2, 2, 0, 0, -2, -3,
                     3, -1, -2, -2, -2, 0, -3, 2, 0, 0, 0, 0),

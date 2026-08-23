@@ -11,7 +11,7 @@ from coach.llm import make_llm
 
 
 def main():
-    run_demo(GnubgProvider(plies=0), make_llm(), rng=random.Random())
+    run_demo(GnubgProvider(plies=2), make_llm(), rng=random.Random())
 
 
 if __name__ == "__main__":
