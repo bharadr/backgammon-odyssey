@@ -197,6 +197,10 @@ def _render(state: dict) -> tuple:
         if card:
             coach = f"### Report card\n```\n{card}\n```"
     win_df, cum_df, err_df = _charts(state)
+    # Anchor the auto-scaled charts at 0 with 15% headroom (floors keep the axis
+    # sane before enough data / for near-perfect play); win% stays fixed at 0-100.
+    cum_top = max(cum_df[_CUM].max() * 1.15, 0.5) if len(cum_df) else 0.5
+    err_top = max(err_df[_ERR].max() * 1.15, 0.05) if len(err_df) else 0.05
     return (
         board_image(display, dice, hl, used),
         _status(state), log, state["verdict"], coach, state,
@@ -205,7 +209,9 @@ def _render(state: dict) -> tuple:
         gr.update(visible=phase in ("review", "dance_me"),
                   value="Continue" if phase == "review" else "Continue (you dance)"),   # continue
         gr.update(visible=phase == "review" and state["can_explain"]),                  # explain
-        win_df, cum_df, err_df,                                                         # live charts
+        win_df,                                                                         # win %: 0-100
+        gr.update(value=cum_df, y_lim=[0, round(float(cum_top), 3)]),                   # from 0
+        gr.update(value=err_df, y_lim=[0, round(float(err_top), 4)]),                   # from 0
     )
 
 
