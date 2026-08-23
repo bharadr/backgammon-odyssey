@@ -8,12 +8,15 @@ Orientation matches engine.board.render: top row is points 13-24 (left->right),
 bottom row 12-1, you are X (home in the bottom-right), the opponent is O.
 """
 from engine.board import Board, flip, pip_count
+from engine.moves import BAR_IDX, OFF
 
 # palette
 _ME, _ME_EDGE = "#1a5fb4", "#0d3a75"
 _OPP, _OPP_EDGE = "#c01c28", "#7a1219"
 _LIGHT, _DARK = "#e6d2ad", "#b1885b"
 _BG, _EDGE, _INK = "#f4e8d0", "#5a3e2b", "#2b2b2b"
+_HL = "#4caf50"     # highlight overlay for legal destinations (semi-transparent green)
+_DIE_USED = "#c9c9c9"   # greyed face of a spent die
 
 # geometry. A full point holds CAP discs (~190px from the edge), so BOARD_H is
 # sized to leave a middle band tall enough for the dice to clear the tallest
@@ -98,7 +101,7 @@ def _off_tray(board: Board) -> list[str]:
     cx = ox + OFF_W / 2
     return [
         f'<rect x="{ox}" y="{BOARD_TOP}" width="{OFF_W}" height="{BOARD_H}" '
-        f'fill="#00000012" stroke="{_EDGE}"/>',
+        f'fill="{_LIGHT}" stroke="{_EDGE}"/>',
         f'<text x="{cx}" y="{BOARD_TOP + 18}" text-anchor="middle" font-size="11" fill="{_OPP}">off</text>',
         f'<text x="{cx}" y="{BOARD_TOP + 40}" text-anchor="middle" font-size="20" '
         f'font-weight="bold" fill="{_OPP}">{board.opp_off_count}</text>',
@@ -108,12 +111,13 @@ def _off_tray(board: Board) -> list[str]:
     ]
 
 
-def _die(x: float, y: float, size: float, value: int) -> list[str]:
+def _die(x: float, y: float, size: float, value: int, used: bool = False) -> list[str]:
+    face, ink = (_DIE_USED, "#8a8a8a") if used else ("#fff", _INK)
     els = [f'<rect class="die" x="{x}" y="{y}" width="{size}" height="{size}" rx="6" '
-           f'fill="#fff" stroke="{_INK}" stroke-width="2"/>']
+           f'fill="{face}" stroke="{ink}" stroke-width="2"/>']
     for fx, fy in _PIPS[value]:
         els.append(f'<circle class="pip" cx="{x + fx * size:.1f}" cy="{y + fy * size:.1f}" '
-                   f'r="{size * 0.09:.1f}" fill="{_INK}"/>')
+                   f'r="{size * 0.09:.1f}" fill="{ink}"/>')
     return els
 
 
@@ -128,27 +132,94 @@ def _pip_counts(board: Board) -> list[str]:
     ]
 
 
-def _dice(dice) -> list[str]:
-    """The two dice, rolled into the board's right half (vertically centred)."""
+def _dice_faces(dice: tuple[int, int], used: list[int]) -> list[tuple[int, bool]]:
+    """The die faces to draw as (value, is_used): four for doubles, two otherwise.
+    Doubles grey the first `len(used)`; a non-double greys each face whose value
+    has been spent."""
+    if dice[0] == dice[1]:
+        return [(dice[0], i < len(used)) for i in range(4)]
+    faces, pool = [], list(used)
+    for value in dice:
+        spent = value in pool
+        if spent:
+            pool.remove(value)
+        faces.append((value, spent))
+    return faces
+
+
+def _dice(dice, used: list[int]) -> list[str]:
+    """The dice, rolled into the board's right half; spent ones greyed out."""
     if not dice:
         return []
-    d, gap = 34, 12
-    right_cx = MARGIN + 9 * POINT_W + BAR_W          # centre of the right-hand half
-    x0 = right_cx - (2 * d + gap) / 2
+    faces = _dice_faces(dice, used)
+    d, gap = 34, 10
+    total = len(faces) * d + (len(faces) - 1) * gap
+    x0 = (MARGIN + 9 * POINT_W + BAR_W) - total / 2      # centred in the right half
     y = BOARD_TOP + BOARD_H / 2 - d / 2
-    return _die(x0, y, d, dice[0]) + _die(x0 + d + gap, y, d, dice[1])
+    els = []
+    for i, (value, is_used) in enumerate(faces):
+        els += _die(x0 + i * (d + gap), y, d, value, is_used)
+    return els
 
 
-def board_svg(board: Board, dice: tuple[int, int] | None = None) -> str:
-    """A standalone <svg> string for `board`, with the dice drawn if given."""
+def _highlight_marks(highlight: set[int]) -> list[str]:
+    """A light, semi-transparent green overlay on each legal destination."""
+    fill = f'fill="{_HL}" fill-opacity="0.45"'
+    marks = []
+    for p in highlight:
+        if p == OFF:
+            ox = MARGIN + 12 * POINT_W + BAR_W
+            marks.append(f'<rect class="hl" x="{ox}" y="{BOARD_TOP}" width="{OFF_W}" '
+                         f'height="{BOARD_H}" {fill}/>')
+        elif p == BAR_IDX:
+            marks.append(f'<rect class="hl" x="{BAR_X}" y="{BOARD_TOP}" width="{BAR_W}" '
+                         f'height="{BOARD_H}" {fill}/>')
+        else:                                    # a point triangle
+            c = p - 12 if p >= 12 else 11 - p
+            x = _col_x(c)
+            cx = x + POINT_W / 2
+            if p >= 12:                          # top point
+                pts = f"{x},{BOARD_TOP} {x + POINT_W},{BOARD_TOP} {cx},{BOARD_TOP + POINT_H}"
+            else:                                # bottom point
+                pts = f"{x},{BOARD_BOTTOM} {x + POINT_W},{BOARD_BOTTOM} {cx},{BOARD_BOTTOM - POINT_H}"
+            marks.append(f'<polygon class="hl" points="{pts}" {fill}/>')
+    return marks
+
+
+def point_at(x: float, y: float) -> int | None:
+    """The point a pixel click lands on, in the WIDTH x HEIGHT board image: a point
+    index 0-23, BAR_IDX (the bar), OFF (the bear-off tray), or None if outside.
+    The inverse of the board's layout -- upper half of a column is its top point,
+    lower half its bottom point."""
+    if not (BOARD_TOP <= y <= BOARD_BOTTOM):
+        return None
+    if BAR_X <= x < BAR_X + BAR_W:
+        return BAR_IDX
+    off_x = MARGIN + 12 * POINT_W + BAR_W
+    if off_x <= x < off_x + OFF_W:
+        return OFF
+    for c in range(12):
+        if _col_x(c) <= x < _col_x(c) + POINT_W:
+            top = y < BOARD_TOP + BOARD_H / 2
+            return (12 + c) if top else (11 - c)
+    return None
+
+
+def board_svg(board: Board, dice: tuple[int, int] | None = None,
+              highlight: set[int] | None = None, used: list[int] | None = None) -> str:
+    """A standalone <svg> string for `board`: dice drawn if given (four for
+    doubles; `used` die values greyed out), legal `highlight` destinations tinted."""
     els = [f'<rect x="{MARGIN - 6}" y="{BOARD_TOP - 2}" '
            f'width="{12 * POINT_W + BAR_W + OFF_W + 12}" height="{BOARD_H + 4}" '
            f'fill="{_BG}" stroke="{_EDGE}" stroke-width="3"/>']
     els += _points_and_checkers(board)
     els += _bar(board)
     els += _off_tray(board)
+    els += _highlight_marks(highlight or set())
     els += _pip_counts(board)
-    els += _dice(dice)
+    els += _dice(dice, used or [])
+    # Explicit width/height (not width="100%") so the SVG rasterizes correctly for
+    # click-mapping; the browser still scales it down to fit its container.
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}" '
-            f'width="100%" style="max-width:{WIDTH}px;height:auto">'
+            f'width="{WIDTH}" height="{HEIGHT}">'
             + "".join(els) + "</svg>")

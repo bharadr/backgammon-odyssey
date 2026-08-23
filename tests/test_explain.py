@@ -71,6 +71,7 @@ def test_explain_passes_prompts_and_returns_the_reply():
 
 
 def test_system_prompt_carries_the_rules_perspective_and_vocabulary():
+    assert "name the best play EXPLICITLY" in SYSTEM_PROMPT            # no oblique references
     assert "Reason ONLY from the numbers provided" in SYSTEM_PROMPT   # anti-hallucination rule
     assert "opponent's 5-point is your 20-point" in SYSTEM_PROMPT     # perspective rule
     assert "CUMULATIVE" in SYSTEM_PROMPT                             # outcome-% convention

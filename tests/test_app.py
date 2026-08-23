@@ -1,51 +1,78 @@
 import random
-from types import SimpleNamespace as NS
 
 import gradio as gr
 
-from engine.board import starting_board
-from coach.analysis import Analysis, MoveAnalysis, OutcomeDist
-from coach.app import (_play_button_updates, _disable_all_buttons,
-                       _new_round_data, build_app)
-from coach.positions import POSITIONS
-from tests.test_moves import mk
+from coach.app import _click, _status, _highlights, _new_state, build_app
+
+
+# make-the-5-point paths (both orderings), in index space -- see test_move_builder
+FIVE_POINT = {((7, 4, 3), (5, 4, 1)), ((5, 4, 1), (7, 4, 3))}
+
+
+def _state(hops=(), source=None, reviewed=False, paths=FIVE_POINT):
+    return {"paths": paths, "hops": hops, "source": source, "reviewed": reviewed,
+            "board": None, "dice": (3, 1), "analysis": None, "name": "", "theme": ""}
 
 
 class _StubProvider:
-    def __init__(self, analysis=None):
-        self._analysis = analysis
     def analyze(self, position, dice):
-        return self._analysis
+        return "ANALYSIS"
 
 
-def _move(board, equity, notation):
-    return MoveAnalysis(after_state=board, outcome=OutcomeDist((equity + 1) / 2, 0, 0, 0, 0),
-                        equity=equity, notation=notation)
+# --- _click: the move-building state transitions -----------------------
+
+def test_click_arms_a_legal_source():
+    assert _click(_state(), 7)["source"] == 7
+
+def test_click_ignores_an_illegal_source():
+    assert _click(_state(), 99)["source"] is None
+
+def test_click_a_destination_commits_a_hop():
+    result = _click(_state(source=7), 4)
+    assert result["hops"] == ((7, 4, 3),) and result["source"] is None
+
+def test_click_another_source_reselects():
+    assert _click(_state(source=7), 5)["source"] == 5      # 5 is also a legal source
+
+def test_click_elsewhere_deselects():
+    assert _click(_state(source=7), 99)["source"] is None
+
+def test_click_is_inert_once_reviewed():
+    st = _state(source=7, reviewed=True)
+    assert _click(st, 4) == st
+
+def test_click_is_inert_on_the_dance():
+    st = _state(paths=set())
+    assert _click(st, 7) == st                             # no paths -> nothing to do
+
+def test_click_off_board_is_inert():
+    assert _click(_state(), None)["source"] is None
 
 
-def test_play_button_updates_shows_and_enables_k_plays_hides_the_rest():
-    menu = [NS(notation="a"), NS(notation="b")]
-    ups = _play_button_updates(menu, pool_size=4)
-    assert ups[0]["value"] == "a" and ups[0]["visible"] is True and ups[0]["interactive"] is True
-    assert ups[1]["value"] == "b" and ups[1]["visible"] is True
-    assert ups[2]["visible"] is False and ups[3]["visible"] is False
+# --- _highlights ------------------------------------------------------
+
+def test_highlights_only_destinations_once_a_source_is_armed():
+    assert _highlights(_state()) == set()                  # nothing highlighted idle
+    assert _highlights(_state(source=7)) == {4}            # only the destination
 
 
-def test_disable_all_buttons_greys_out_every_button():
-    ups = _disable_all_buttons(pool_size=3)
-    assert len(ups) == 3
-    assert all(u["interactive"] is False for u in ups)
+# --- _status ----------------------------------------------------------
+
+def test_status_messages_track_the_phase():
+    assert "checker" in _status(_state())                  # idle: pick a source
+    assert "destination" in _status(_state(source=7))      # armed
+    assert "Submit" in _status(_state(hops=((7, 4, 3), (5, 4, 1))))  # complete
+    assert _status(_state(reviewed=True)) == ""
+    assert "dance" in _status(_state(paths=set())).lower()
 
 
-def test_new_round_data_sorts_the_menu_by_notation_not_equity():
-    # equity order is z (best), a (worst); the menu must come back a, z
-    a = Analysis(position=starting_board(), dice=(3, 1),
-                 moves=(_move(mk({5: 2}), 0.30, "z"), _move(mk({6: 2}), 0.10, "a")))
-    position, dice, analysis, menu = _new_round_data(_StubProvider(a), random.Random(0))
-    assert [m.notation for m in menu] == ["a", "z"]
-    assert position in POSITIONS
-    assert len(dice) == 2 and all(1 <= d <= 6 for d in dice)
+# --- _new_state + construction ----------------------------------------
 
+def test_new_state_has_the_expected_shape():
+    st = _new_state(_StubProvider(), random.Random(0))
+    assert set(st) >= {"board", "dice", "analysis", "paths", "hops", "source", "reviewed"}
+    assert st["hops"] == () and st["source"] is None and st["reviewed"] is False
+    assert isinstance(st["paths"], set)
 
 def test_build_app_constructs_with_stubs():
     app = build_app(provider=_StubProvider(), llm=lambda system, user: "x",

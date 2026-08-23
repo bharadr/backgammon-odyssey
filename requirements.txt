@@ -3,3 +3,4 @@ torch
 pytest
 anthropic
 gradio
+cairosvg      # rasterize the SVG board for clicks; needs system libcairo (see packages.txt)
