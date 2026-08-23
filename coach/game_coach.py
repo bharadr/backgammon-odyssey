@@ -17,19 +17,25 @@ from coach.grade import grade, Verdict, BLUNDER
 
 
 def report_card_text(verdicts: list[Verdict]) -> str:
-    """End-of-game stats block (no banner), shared by the terminal and GUI:
-    moves coached, best-play rate, average equity lost per move, and the single
-    worst move. Returns '' when no moves were coached."""
+    """End-of-game stats block (no banner), shared by the terminal and GUI: moves
+    coached, decisions, best-play rate, error rate + estimated PR, and the single
+    worst move. Returns '' when no moves were coached.
+
+    The error rate / PR count only real DECISIONS -- a forced move (one legal play)
+    is excluded, matching the gnubg convention; PR is approximated as rate x 500.
+    """
     if not verdicts:
         return ""
     n = len(verdicts)
-    best = sum(1 for v in verdicts if v.equity_loss <= 0)
-    avg = sum(v.equity_loss for v in verdicts) / n
+    decisions = [v for v in verdicts if v.of_n > 1]      # exclude forced moves
+    d = len(decisions)
     worst = max(verdicts, key=lambda v: v.equity_loss)
-    lines = [
-        f"Moves coached: {n}   Best play found: {best}/{n} ({100 * best // n}%)",
-        f"Avg equity lost/move: {avg:.3f}",
-    ]
+    lines = [f"Moves coached: {n}   Decisions (non-forced): {d}"]
+    if d:
+        best = sum(1 for v in decisions if v.equity_loss <= 0)
+        rate = sum(v.equity_loss for v in decisions) / d
+        lines.append(f"Best play found: {best}/{d} ({100 * best // d}%)")
+        lines.append(f"Error rate: {rate:.3f}/move  (~PR {rate * 500:.0f})")
     if worst.equity_loss > 0:
         lines.append(f"Worst: {worst.label.lower()} (rank {worst.rank} of "
                      f"{worst.of_n}, lost {worst.equity_loss:.3f})")

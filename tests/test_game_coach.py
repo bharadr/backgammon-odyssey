@@ -1,6 +1,7 @@
 from engine.board import starting_board
 from coach.analysis import Analysis, MoveAnalysis, OutcomeDist
-from coach.game_coach import GameCoach
+from coach.game_coach import GameCoach, report_card_text
+from coach.grade import Verdict
 from tests.test_moves import mk
 
 BEST, CHOSEN = mk({5: 2}), mk({6: 2})
@@ -80,9 +81,9 @@ def test_report_card_summarizes_the_session():
     coach.report_card()
 
     text = "\n".join(out)
-    assert "Moves coached: 3" in text
+    assert "Moves coached: 3   Decisions (non-forced): 3" in text   # all had a choice
     assert "Best play found: 1/3 (33%)" in text      # integer-division rate
-    assert "Avg equity lost/move: 0.067" in text     # (0 + 0.05 + 0.15) / 3
+    assert "Error rate: 0.067/move  (~PR 33)" in text  # (0 + 0.05 + 0.15) / 3 x 500
     assert "lost 0.150" in text                      # worst move
 
 
@@ -96,7 +97,7 @@ def test_report_card_omits_the_worst_line_when_every_move_was_best():
 
     text = "\n".join(out)
     assert "Best play found: 2/2 (100%)" in text
-    assert "Avg equity lost/move: 0.000" in text
+    assert "Error rate: 0.000/move  (~PR 0)" in text
     assert "Worst" not in text                       # nobody erred -> no worst-move line
 
 
@@ -105,3 +106,21 @@ def test_report_card_is_silent_with_no_moves():
     GameCoach(_StubProvider([]), _StubLLM(), output_fn=out.append,
               input_fn=_Input("")).report_card()
     assert out == []
+
+
+def _verdict(loss, of_n, rank=1):
+    return Verdict(label="x", symbol="?", rank=rank, of_n=of_n, equity_loss=loss, line="")
+
+
+def test_report_card_excludes_forced_moves_from_the_error_rate_and_pr():
+    # two real decisions (of_n=2) losing 0.10 total, plus a forced move (of_n=1)
+    text = report_card_text([_verdict(0.04, 2), _verdict(0.06, 2), _verdict(0.0, 1)])
+    assert "Moves coached: 3   Decisions (non-forced): 2" in text
+    assert "Error rate: 0.050/move  (~PR 25)" in text   # 0.10/2, not 0.10/3
+    assert "Best play found: 0/2" in text               # forced move isn't a 'best' decision
+
+
+def test_report_card_with_only_forced_moves_omits_the_rate():
+    text = report_card_text([_verdict(0.0, 1), _verdict(0.0, 1)])
+    assert "Decisions (non-forced): 0" in text
+    assert "Error rate" not in text and "PR" not in text   # nothing to rate

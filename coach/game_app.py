@@ -95,10 +95,15 @@ def _review_submission(state: dict, provider: AnalysisProvider) -> dict:
     verdict = grade(evidence)
     move = describe_move(state["board"], after, state["dice"])
 
-    n = len(state["verdicts"]) + 1                     # this is your n-th coached move
-    cum_loss = (state["stats"][-1]["cum_loss"] if state["stats"] else 0.0) + verdict.equity_loss
+    prev = state["stats"][-1] if state["stats"] else None
+    n = len(state["verdicts"]) + 1                     # your move number (all moves)
+    cum_loss = (prev["cum_loss"] if prev else 0.0) + verdict.equity_loss
+    # error rate counts only real decisions: a forced move (one legal play) isn't
+    # one, and dances never reach here -- so both are excluded from the denominator.
+    decisions = (prev["decisions"] if prev else 0) + (0 if verdict.of_n == 1 else 1)
+    err = cum_loss / decisions if decisions else 0.0        # avg loss per decision (~PR/500)
     stat = {"move": n, "win": evidence.chosen.outcome.win,   # win% of the play you made
-            "cum_loss": cum_loss, "err": cum_loss / n}       # error rate = avg loss/move
+            "cum_loss": cum_loss, "decisions": decisions, "err": err}
 
     new = {**state, "phase": "review", "reviewed": True, "source": None,
            "evidence": evidence, "can_explain": verdict.equity_loss > 0, "coach": "",
@@ -201,6 +206,12 @@ def _render(state: dict) -> tuple:
     # sane before enough data / for near-perfect play); win% stays fixed at 0-100.
     cum_top = max(cum_df[_CUM].max() * 1.15, 0.5) if len(cum_df) else 0.5
     err_top = max(err_df[_ERR].max() * 1.15, 0.05) if len(err_df) else 0.05
+    last = state["stats"][-1] if state["stats"] else None
+    if last and last["decisions"]:
+        pr = (f"**Estimated PR ≈ {last['err'] * 500:.0f}**  ·  error {last['err']:.3f}/move "
+              f"over {last['decisions']} decision(s)  ·  *forced moves excluded*")
+    else:
+        pr = "*Estimated PR — (no non-forced decisions yet)*"
     return (
         board_image(display, dice, hl, used),
         _status(state), log, state["verdict"], coach, state,
@@ -212,6 +223,7 @@ def _render(state: dict) -> tuple:
         win_df,                                                                         # win %: 0-100
         gr.update(value=cum_df, y_lim=[0, round(float(cum_top), 3)]),                   # from 0
         gr.update(value=err_df, y_lim=[0, round(float(err_top), 4)]),                   # from 0
+        pr,                                                                             # live PR readout
     )
 
 
@@ -274,6 +286,7 @@ def build_app(provider: AnalysisProvider | None = None, llm: LLM | None = None,
                 explain_btn = gr.Button("Explain this move", visible=False)
                 coach_view = gr.Markdown()
                 with gr.Accordion("Your stats (live)", open=True):
+                    pr_view = gr.Markdown()
                     win_plot = gr.LinePlot(x="move", y=_WIN, title="Win % (your play)",
                                            y_lim=[0, 100], height=170)
                     cum_plot = gr.LinePlot(x="move", y=_CUM, title="Cumulative equity lost",
@@ -286,7 +299,7 @@ def build_app(provider: AnalysisProvider | None = None, llm: LLM | None = None,
 
         out = [board_img, status, log_view, verdict_view, coach_view, state,
                undo_btn, submit_btn, continue_btn, explain_btn,
-               win_plot, cum_plot, err_plot]
+               win_plot, cum_plot, err_plot, pr_view]
         app.load(new_game, outputs=out)
         new_btn.click(new_game, outputs=out)
         board_img.select(on_click, inputs=[state], outputs=out)

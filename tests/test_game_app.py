@@ -118,7 +118,7 @@ def test_render_shows_the_report_card_at_game_over():
 def test_render_emits_one_value_per_output_and_passes_state_through():
     st = new_state(random.Random(0))
     rendered = _render(st)
-    assert len(rendered) == 13           # must match build_app's `out` list length
+    assert len(rendered) == 14           # must match build_app's `out` list length
     assert rendered[5] is st             # the gr.State passthrough
 
 
@@ -132,7 +132,8 @@ def test_stats_accumulate_and_feed_the_charts():
     (s,) = out["stats"]                              # exactly one coached move so far
     assert s["move"] == 1
     assert 0.0 <= s["win"] <= 1.0
-    assert s["cum_loss"] >= 0 and s["err"] == s["cum_loss"] / 1
+    assert s["decisions"] == 1                       # opening 3-1 has a real choice
+    assert s["cum_loss"] >= 0 and s["err"] == s["cum_loss"] / s["decisions"]
 
     win_df, cum_df, err_df = _charts(out)
     assert len(win_df) == len(cum_df) == len(err_df) == 1
