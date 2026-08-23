@@ -72,8 +72,9 @@ def play_interactive(human: Agent, opponent: Agent, rng: random.Random,
     raise RuntimeError("game exceeded max_turns without terminating")
 
 
-# Uncalibrated starting strength; tune toward a target equity-loss/move later.
-OPPONENT_TEMPERATURE = 0.1
+# Intermediate strength (~gnubg PR 11), calibrated to equity lost per move.
+# See coach.game_app.DIFFICULTY for the full level->tau mapping.
+OPPONENT_TEMPERATURE = 0.045
 
 
 def main() -> None:

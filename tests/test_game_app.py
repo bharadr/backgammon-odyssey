@@ -6,8 +6,9 @@ from engine.board import Board, starting_board
 from engine.moves import generate_move_paths
 from engine.move_builder import apply_hops
 from coach.gnubg_provider import GnubgProvider
-from coach.game_app import (new_state, _advance, _review_submission, _render,
-                            build_app)
+from agent.skill_agent import SkillAgent
+from coach.game_app import (new_state, _advance, _review_submission, _render, _charts,
+                            _mirror_notation, build_app, DIFFICULTY, DEFAULT_LEVEL)
 
 
 def _trivial_opponent(board, dice, afterstates):
@@ -23,6 +24,7 @@ def test_new_state_starts_your_turn_from_the_opening_position():
     assert st["phase"] == "build" and st["hops"] == () and st["source"] is None
     assert st["paths"] == generate_move_paths(st["board"], st["dice"])
     assert st["verdict"] == "" and st["coach"] == "" and len(st["log"]) == 1
+    assert st["verdicts"] == []
 
 
 # --- _advance: opponent plays, view returns to YOUR seat --------------------
@@ -86,13 +88,82 @@ def test_review_submission_detects_your_win():
     assert "You win" in out["verdict"]
 
 
+def test_review_submission_records_each_verdict_for_the_report_card():
+    prov = GnubgProvider(plies=0)
+    board, dice = starting_board(), (3, 1)
+    st = {**new_state(random.Random(0)), "board": board, "dice": dice,
+          "hops": sorted(generate_move_paths(board, dice))[0]}
+    out = _review_submission(st, prov)
+    assert len(out["verdicts"]) == len(st["verdicts"]) + 1
+
+
+def test_render_shows_the_report_card_at_game_over():
+    # reach gameover via the bear-off win, then render
+    pts = [0] * 24
+    pts[0], pts[23] = 1, -15
+    board = Board(points=tuple(pts), bar_count=0, opp_bar_count=0,
+                  off_count=14, opp_off_count=0)
+    dice = (1, 3)
+    st = {**new_state(random.Random(0)), "board": board, "dice": dice,
+          "hops": sorted(generate_move_paths(board, dice))[0]}
+    over = _review_submission(st, GnubgProvider(plies=0))
+
+    coach_panel = _render(over)[4]                    # index 4 == coach_view
+    assert "Report card" in coach_panel
+    assert "Moves coached: 1" in coach_panel
+
+
 # --- rendering + construction ----------------------------------------------
 
 def test_render_emits_one_value_per_output_and_passes_state_through():
     st = new_state(random.Random(0))
     rendered = _render(st)
-    assert len(rendered) == 10           # must match build_app's `out` list length
+    assert len(rendered) == 13           # must match build_app's `out` list length
     assert rendered[5] is st             # the gr.State passthrough
+
+
+def test_stats_accumulate_and_feed_the_charts():
+    prov = GnubgProvider(plies=0)
+    board, dice = starting_board(), (3, 1)
+    st = {**new_state(random.Random(0)), "board": board, "dice": dice,
+          "hops": sorted(generate_move_paths(board, dice))[0]}
+    out = _review_submission(st, prov)
+
+    (s,) = out["stats"]                              # exactly one coached move so far
+    assert s["move"] == 1
+    assert 0.0 <= s["win"] <= 1.0
+    assert s["cum_loss"] >= 0 and s["err"] == s["cum_loss"] / 1
+
+    win_df, cum_df, err_df = _charts(out)
+    assert len(win_df) == len(cum_df) == len(err_df) == 1
+    assert list(win_df["move"]) == [1]
+    assert _charts(new_state(random.Random(0)))[0].empty   # no rows before your first move
+
+
+def test_mirror_notation_flips_points_into_your_numbering():
+    assert _mirror_notation("13/7") == "12/18"          # 25-13, 25-7
+    assert _mirror_notation("11/7*") == "14/18*"        # hit marker preserved
+    assert _mirror_notation("bar/21 13/11") == "bar/4 12/14"   # bar preserved
+    assert _mirror_notation("6/off") == "19/off"        # off preserved
+    # mirroring is an involution: applying it twice is the identity
+    assert _mirror_notation(_mirror_notation("8/5 6/5*")) == "8/5 6/5*"
+
+
+def test_difficulty_levels_are_ordered_strong_to_weak_and_include_the_default():
+    assert DEFAULT_LEVEL in DIFFICULTY
+    taus = list(DIFFICULTY.values())
+    # weaker levels first -> temperature strictly decreases toward Expert
+    assert taus == sorted(taus, reverse=True)
+    assert DIFFICULTY["Expert"] < DIFFICULTY["Intermediate"] < DIFFICULTY["Beginner"]
+
+
+def test_a_level_backed_opponent_advances_a_turn():
+    rng = random.Random(5)
+    opp = SkillAgent(GnubgProvider(plies=0), DIFFICULTY[DEFAULT_LEVEL], rng)
+    st = {**new_state(rng), "hops": (), "phase": "dance_me"}
+    out = _advance(st, rng, opp)
+    assert out["phase"] in ("build", "dance_me", "gameover")
+    assert len(out["log"]) > len(st["log"])
 
 
 def test_build_app_constructs_with_stubs():

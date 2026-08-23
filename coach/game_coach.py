@@ -16,6 +16,26 @@ from coach.explain import explain, LLM
 from coach.grade import grade, Verdict, BLUNDER
 
 
+def report_card_text(verdicts: list[Verdict]) -> str:
+    """End-of-game stats block (no banner), shared by the terminal and GUI:
+    moves coached, best-play rate, average equity lost per move, and the single
+    worst move. Returns '' when no moves were coached."""
+    if not verdicts:
+        return ""
+    n = len(verdicts)
+    best = sum(1 for v in verdicts if v.equity_loss <= 0)
+    avg = sum(v.equity_loss for v in verdicts) / n
+    worst = max(verdicts, key=lambda v: v.equity_loss)
+    lines = [
+        f"Moves coached: {n}   Best play found: {best}/{n} ({100 * best // n}%)",
+        f"Avg equity lost/move: {avg:.3f}",
+    ]
+    if worst.equity_loss > 0:
+        lines.append(f"Worst: {worst.label.lower()} (rank {worst.rank} of "
+                     f"{worst.of_n}, lost {worst.equity_loss:.3f})")
+    return "\n".join(lines)
+
+
 class GameCoach:
     """Reviews the human's plays during one game and reports on it at the end."""
 
@@ -75,17 +95,8 @@ class GameCoach:
     def report_card(self) -> None:
         """Print end-of-game stats: moves coached, best-play rate, average equity
         lost per move, and the single worst move. Silent if no moves were seen."""
-        if not self._verdicts:
-            return
-        n = len(self._verdicts)
-        best = sum(1 for v in self._verdicts if v.equity_loss <= 0)
-        avg = sum(v.equity_loss for v in self._verdicts) / n
-        worst = max(self._verdicts, key=lambda v: v.equity_loss)
-
-        self._out("")
-        self._out("=== Report card ===")
-        self._out(f"Moves coached: {n}   Best play found: {best}/{n} ({100 * best // n}%)")
-        self._out(f"Avg equity lost/move: {avg:.3f}")
-        if worst.equity_loss > 0:
-            self._out(f"Worst: {worst.label.lower()} (rank {worst.rank} of "
-                      f"{worst.of_n}, lost {worst.equity_loss:.3f})")
+        text = report_card_text(self._verdicts)
+        if text:
+            self._out("")
+            self._out("=== Report card ===")
+            self._out(text)
