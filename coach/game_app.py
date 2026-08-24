@@ -78,14 +78,24 @@ def _mirror_notation(notation: str) -> str:
 
 def new_state(rng: random.Random) -> dict:
     board = starting_board()
-    dice = roll_dice(rng)
-    paths = generate_move_paths(board, dice)
-    return {"board": board, "dice": dice, "paths": paths, "hops": (), "source": None,
-            "phase": "build" if paths else "dance_me", "reviewed": not paths,
-            "log": ["New game -- you are X (blue). Good luck!"],
+    # Opening: each side rolls ONE die; ties re-roll; the higher roller goes first
+    # and plays both dice -- so the opening roll can never be doubles.
+    mine, theirs = rng.randint(1, 6), rng.randint(1, 6)
+    while mine == theirs:
+        mine, theirs = rng.randint(1, 6), rng.randint(1, 6)
+    dice = (max(mine, theirs), min(mine, theirs))
+    you_first = mine > theirs
+    base = {"board": board, "dice": dice, "hops": (), "source": None,
+            "log": [f"Opening roll -- you {mine}, opponent {theirs}: "
+                    f"{'you go first' if you_first else 'opponent goes first'}."],
             "verdict": "", "coach": "", "evidence": None, "can_explain": False,
             "verdicts": [],     # every graded move, for the end-of-game report card
             "stats": []}        # per-move (win%, cumulative loss, error rate) for the charts
+    if you_first:
+        return {**base, "paths": generate_move_paths(board, dice),
+                "phase": "build", "reviewed": False}
+    # Opponent opens: new_game plays its opening move (with `dice`) before your turn.
+    return {**base, "paths": set(), "phase": "opp_first", "reviewed": True}
 
 
 def _review_submission(state: dict, provider: AnalysisProvider) -> dict:
@@ -119,15 +129,17 @@ def _review_submission(state: dict, provider: AnalysisProvider) -> dict:
     return new
 
 
-def _advance(state: dict, rng: random.Random, opponent) -> dict:
+def _advance(state: dict, rng: random.Random, opponent, opp_dice=None) -> dict:
     """Play the opponent's turn, then set up your next turn (or end the game).
 
     `after` is your afterstate (or your unchanged board if you danced). We flip to
     the opponent's seat to play + judge the win there, then flip back to yours.
+    `opp_dice` forces the opponent's roll (used for a fixed opening); otherwise it
+    rolls fresh.
     """
     after = apply_hops(state["board"], state["hops"])
     opp_before = flip(after)
-    opp_dice = roll_dice(rng)
+    opp_dice = opp_dice if opp_dice is not None else roll_dice(rng)
     opp_after, moved = play_turn(opp_before, opp_dice, opponent)
     move = (_mirror_notation(describe_move(opp_before, opp_after, opp_dice)) if moved
             else "no legal move -- forfeits")
@@ -161,6 +173,8 @@ def _status(state: dict) -> str:
         return f"You rolled **{d[0]}-{d[1]}** -- no legal move. Click **Continue**."
     if phase == "review":
         return "Move submitted -- read the verdict, optionally **Explain**, then **Continue**."
+    if phase == "opp_first":
+        return "Opponent opens the game..."     # transient: new_game resolves it at once
     roll = f"You rolled **{d[0]}-{d[1]}**. "     # build
     if state["source"] is not None:
         return roll + "Click a highlighted destination (or another checker to reselect)."
@@ -234,8 +248,12 @@ def build_app(provider: AnalysisProvider | None = None, llm: LLM | None = None,
     rng = rng or random.Random()
     fixed_opponent = opponent      # tests may inject a deterministic Agent; else per-level
 
-    def new_game():
-        return _render(new_state(rng))
+    def new_game(level=DEFAULT_LEVEL):
+        st = new_state(rng)
+        if st["phase"] == "opp_first":          # opponent won the opening -> it plays first
+            opponent = fixed_opponent or SkillAgent(provider, DIFFICULTY[level], rng)
+            st = _advance(st, rng, opponent, opp_dice=st["dice"])
+        return _render(st)
 
     def on_click(state, evt: gr.SelectData):
         if state["phase"] != "build":
@@ -301,7 +319,7 @@ def build_app(provider: AnalysisProvider | None = None, llm: LLM | None = None,
                undo_btn, submit_btn, continue_btn, explain_btn,
                win_plot, cum_plot, err_plot, pr_view]
         app.load(new_game, outputs=out)
-        new_btn.click(new_game, outputs=out)
+        new_btn.click(new_game, inputs=[level], outputs=out)
         board_img.select(on_click, inputs=[state], outputs=out)
         undo_btn.click(on_undo, inputs=[state], outputs=out)
         submit_btn.click(on_submit, inputs=[state], outputs=out)

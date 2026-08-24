@@ -18,13 +18,33 @@ def _trivial_opponent(board, dice, afterstates):
 
 # --- new_state ---------------------------------------------------------------
 
-def test_new_state_starts_your_turn_from_the_opening_position():
+def test_new_state_starts_from_the_opening_position():
     st = new_state(random.Random(0))
     assert st["board"] == starting_board()
-    assert st["phase"] == "build" and st["hops"] == () and st["source"] is None
-    assert st["paths"] == generate_move_paths(st["board"], st["dice"])
+    assert st["hops"] == () and st["source"] is None
     assert st["verdict"] == "" and st["coach"] == "" and len(st["log"]) == 1
-    assert st["verdicts"] == []
+    assert st["verdicts"] == [] and st["stats"] == []
+    if st["phase"] == "build":                       # you won the opening
+        assert st["paths"] == generate_move_paths(st["board"], st["dice"])
+    else:                                            # opponent opens (resolved by new_game)
+        assert st["phase"] == "opp_first"
+
+
+def test_opening_roll_is_never_doubles_and_first_player_is_random():
+    first = []
+    for seed in range(200):
+        st = new_state(random.Random(seed))
+        assert st["dice"][0] != st["dice"][1]        # opening can never be doubles
+        first.append(st["phase"] == "build")         # did you go first?
+    assert 0.3 < sum(first) / len(first) < 0.7       # roughly a 50/50 coin flip
+
+
+def test_opponent_opening_is_resolved_into_your_turn():
+    opp_first = next(st for s in range(50)
+                     if (st := new_state(random.Random(s)))["phase"] == "opp_first")
+    out = _advance(opp_first, random.Random(0), _trivial_opponent, opp_dice=opp_first["dice"])
+    assert out["phase"] in ("build", "dance_me")     # now it's your turn
+    assert len(out["log"]) > len(opp_first["log"])   # opponent's opening move was logged
 
 
 # --- _advance: opponent plays, view returns to YOUR seat --------------------
